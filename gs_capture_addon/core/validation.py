@@ -478,3 +478,61 @@ def quick_validate(context, settings) -> Tuple[bool, str]:
                 return False, issue.message
 
         return False, "Validation failed"
+
+
+def estimate_capture_size(settings, context) -> dict:
+    """
+    Estimate total capture size in MB.
+
+    Returns dict with:
+    - images_mb: RGB image size
+    - depth_mb: Depth maps (if enabled)
+    - normals_mb: Normal maps (if enabled)
+    - total_mb: Total estimate
+    - total_gb: Total in GB
+    - warning: String if size is large
+    """
+    rd = context.scene.render
+    width = rd.resolution_x
+    height = rd.resolution_y
+    num_cameras = settings.camera_count
+
+    # Base pixel count
+    pixels = width * height
+
+    # PNG compression ratio (approximate)
+    png_ratio = 0.4  # PNG compresses well for rendered images
+
+    # RGB images: 3 bytes per pixel, with compression
+    rgb_bytes = pixels * 3 * png_ratio
+    images_mb = (rgb_bytes * num_cameras) / (1024 * 1024)
+
+    # Depth maps (16-bit grayscale)
+    depth_mb = 0
+    if getattr(settings, 'export_depth', False):
+        depth_bytes = pixels * 2 * 0.5  # 16-bit with compression
+        depth_mb = (depth_bytes * num_cameras) / (1024 * 1024)
+
+    # Normal maps (if enabled) - EXR is larger
+    normals_mb = 0
+    if getattr(settings, 'export_normals', False):
+        normal_bytes = pixels * 6  # 16-bit float * 3 channels, minimal compression
+        normals_mb = (normal_bytes * num_cameras) / (1024 * 1024)
+
+    total_mb = images_mb + depth_mb + normals_mb + 10  # +10MB for metadata
+    total_gb = total_mb / 1024
+
+    warning = None
+    if total_gb > 50:
+        warning = f"Very large capture: {total_gb:.1f} GB - consider reducing resolution or camera count"
+    elif total_gb > 10:
+        warning = f"Large capture: {total_gb:.1f} GB - ensure sufficient disk space"
+
+    return {
+        'images_mb': round(images_mb, 1),
+        'depth_mb': round(depth_mb, 1),
+        'normals_mb': round(normals_mb, 1),
+        'total_mb': round(total_mb, 1),
+        'total_gb': round(total_gb, 2),
+        'warning': warning
+    }

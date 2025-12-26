@@ -201,8 +201,8 @@ class GSCAPTURE_OT_apply_recommendations(Operator):
         if settings.analysis_recommended_resolution:
             try:
                 res_parts = settings.analysis_recommended_resolution.split('x')
-                settings.render_resolution_x = int(res_parts[0])
-                settings.render_resolution_y = int(res_parts[1])
+                context.scene.render.resolution_x = int(res_parts[0])
+                context.scene.render.resolution_y = int(res_parts[1])
             except (ValueError, IndexError):
                 pass
 

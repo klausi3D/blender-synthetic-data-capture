@@ -176,6 +176,18 @@ class GSCaptureSettings(PropertyGroup):
     # Blender's native render settings panel. This avoids duplication and
     # ensures settings are always in sync.
 
+    render_speed_preset: EnumProperty(
+        name="Render Speed",
+        description="Optimize render settings for speed vs quality",
+        items=[
+            ('CUSTOM', "Custom", "Use current Blender render settings"),
+            ('FAST', "Fast (Eevee)", "Eevee with low samples - fastest"),
+            ('BALANCED', "Balanced (Eevee)", "Eevee with good quality"),
+            ('QUALITY', "Quality (Cycles)", "Cycles with 128 samples"),
+        ],
+        default='CUSTOM'
+    )
+
     transparent_background: BoolProperty(
         name="Transparent Background",
         description="Render with transparent background (PNG/EXR only)",

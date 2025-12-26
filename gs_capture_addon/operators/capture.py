@@ -5,7 +5,6 @@ Includes checkpoint support, depth/normal/mask export.
 
 import bpy
 import os
-import numpy as np
 from bpy.types import Operator
 from mathutils import Vector
 
@@ -63,6 +62,9 @@ class GSCAPTURE_OT_capture_selected(Operator):
     _depth_output_node = None
     _normal_output_node = None
     _mask_output_node = None
+    _original_engine = None
+    _original_eevee_samples = None
+    _original_cycles_samples = None
 
     def _get_all_children(self, obj):
         """Recursively get all children of an object."""
@@ -201,6 +203,24 @@ class GSCAPTURE_OT_capture_selected(Operator):
 
     def execute(self, context):
         settings = context.scene.gs_capture_settings
+        rd = context.scene.render
+
+        # Apply render speed preset
+        self._original_engine = rd.engine
+        self._original_eevee_samples = context.scene.eevee.taa_render_samples if hasattr(context.scene.eevee, 'taa_render_samples') else 64
+        self._original_cycles_samples = context.scene.cycles.samples if hasattr(context.scene, 'cycles') else 128
+
+        if settings.render_speed_preset == 'FAST':
+            rd.engine = 'BLENDER_EEVEE_NEXT' if bpy.app.version >= (4, 2, 0) else 'BLENDER_EEVEE'
+            if hasattr(context.scene.eevee, 'taa_render_samples'):
+                context.scene.eevee.taa_render_samples = 16
+        elif settings.render_speed_preset == 'BALANCED':
+            rd.engine = 'BLENDER_EEVEE_NEXT' if bpy.app.version >= (4, 2, 0) else 'BLENDER_EEVEE'
+            if hasattr(context.scene.eevee, 'taa_render_samples'):
+                context.scene.eevee.taa_render_samples = 64
+        elif settings.render_speed_preset == 'QUALITY':
+            rd.engine = 'CYCLES'
+            context.scene.cycles.samples = 128
 
         # Get selected objects
         selected = [obj for obj in context.selected_objects if obj.type == 'MESH']
@@ -394,18 +414,31 @@ class GSCAPTURE_OT_capture_selected(Operator):
                 f"image_{actual_index:04d}.{ext}"
             )
 
-            if self._save_manually:
-                bpy.ops.render.render()
-                render_result = bpy.data.images.get('Render Result')
-                if render_result:
-                    render_result.save_render(filepath=image_path)
-            else:
-                context.scene.render.filepath = image_path
-                bpy.ops.render.render(write_still=True)
+            # Render and save
+            save_success = False
+            try:
+                if self._save_manually:
+                    bpy.ops.render.render()
+                    render_result = bpy.data.images.get('Render Result')
+                    if render_result:
+                        render_result.save_render(filepath=image_path)
+                else:
+                    context.scene.render.filepath = image_path
+                    bpy.ops.render.render(write_still=True)
 
-            # Update checkpoint
-            self._checkpoint_data['completed_images'].append(actual_index)
-            self._checkpoint_data['current_index'] = self._current_camera_index
+                # Verify file was written successfully
+                if os.path.exists(image_path) and os.path.getsize(image_path) > 0:
+                    save_success = True
+                else:
+                    self.report({'WARNING'}, f"Image {actual_index} may not have saved correctly")
+
+            except Exception as e:
+                self.report({'ERROR'}, f"Failed to save image {actual_index}: {e}")
+
+            # Only update checkpoint if save was successful
+            if save_success:
+                self._checkpoint_data['completed_images'].append(actual_index)
+                self._checkpoint_data['current_index'] = self._current_camera_index
 
             if settings.enable_checkpoints:
                 if (self._current_camera_index + 1) % settings.checkpoint_interval == 0:
@@ -480,11 +513,19 @@ class GSCAPTURE_OT_capture_selected(Operator):
         if self._original_file_format:
             try:
                 context.scene.render.image_settings.file_format = self._original_file_format
-            except:
-                pass
+            except Exception as e:
+                print(f"Warning: Could not restore file format: {e}")
 
         # Restore film transparent
         context.scene.render.film_transparent = self._original_film_transparent
+
+        # Restore render engine and samples
+        if self._original_engine:
+            context.scene.render.engine = self._original_engine
+        if self._original_eevee_samples and hasattr(context.scene.eevee, 'taa_render_samples'):
+            context.scene.eevee.taa_render_samples = self._original_eevee_samples
+        if self._original_cycles_samples and hasattr(context.scene, 'cycles'):
+            context.scene.cycles.samples = self._original_cycles_samples
 
         # Delete GS cameras
         delete_gs_cameras(context)

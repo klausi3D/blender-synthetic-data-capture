@@ -138,6 +138,10 @@ class GSCAPTURE_OT_add_to_group(Operator):
             self.report({'ERROR'}, "No groups exist")
             return {'CANCELLED'}
 
+        if not (0 <= settings.active_group_index < len(settings.object_groups)):
+            self.report({'ERROR'}, "Invalid group index")
+            return {'CANCELLED'}
+
         group = settings.object_groups[settings.active_group_index]
 
         for obj in context.selected_objects:
@@ -161,7 +165,7 @@ class GSCAPTURE_OT_remove_from_group(Operator):
     def execute(self, context):
         settings = context.scene.gs_capture_settings
 
-        if settings.object_groups:
+        if settings.object_groups and 0 <= settings.active_group_index < len(settings.object_groups):
             group = settings.object_groups[settings.active_group_index]
             if 0 <= self.index < len(group.objects):
                 group.objects.remove(self.index)

@@ -5,6 +5,7 @@ Analyzes scene complexity to recommend optimal capture parameters.
 
 import bpy
 import math
+from collections import defaultdict
 from mathutils import Vector
 
 
@@ -93,6 +94,23 @@ def calculate_mesh_surface_area(obj):
     return total_area
 
 
+def _build_adjacency_map(mesh):
+    """Build vertex adjacency map from mesh edges.
+
+    Args:
+        mesh: Blender mesh data
+
+    Returns:
+        defaultdict: Maps vertex index to list of adjacent vertex indices
+    """
+    adjacency = defaultdict(list)
+    for edge in mesh.edges:
+        v0, v1 = edge.vertices[0], edge.vertices[1]
+        adjacency[v0].append(v1)
+        adjacency[v1].append(v0)
+    return adjacency
+
+
 def calculate_vertex_curvature_variance(obj):
     """Estimate curvature variance to detect detailed areas.
 
@@ -113,6 +131,9 @@ def calculate_vertex_curvature_variance(obj):
     if not mesh.vertex_normals:
         return 0.0
 
+    # Build adjacency map once - O(E) instead of O(V*E) for the nested loop
+    adjacency = _build_adjacency_map(mesh)
+
     # Sample a subset for performance
     sample_size = min(1000, len(mesh.vertices))
     step = max(1, len(mesh.vertices) // sample_size)
@@ -123,16 +144,14 @@ def calculate_vertex_curvature_variance(obj):
         vert = mesh.vertices[i]
         vert_normal = vert.normal
 
-        # Compare with connected vertices' normals
-        for edge in mesh.edges:
-            if i in edge.vertices:
-                other_idx = edge.vertices[0] if edge.vertices[1] == i else edge.vertices[1]
-                if other_idx < len(mesh.vertices):
-                    other_normal = mesh.vertices[other_idx].normal
-                    # Angle between normals indicates curvature
-                    dot = max(-1, min(1, vert_normal.dot(other_normal)))
-                    angle = math.acos(dot)
-                    normal_angles.append(angle)
+        # Compare with connected vertices' normals using adjacency map - O(degree) per vertex
+        for other_idx in adjacency[i]:
+            if other_idx < len(mesh.vertices):
+                other_normal = mesh.vertices[other_idx].normal
+                # Angle between normals indicates curvature
+                dot = max(-1, min(1, vert_normal.dot(other_normal)))
+                angle = math.acos(dot)
+                normal_angles.append(angle)
 
     if not normal_angles:
         return 0.0
@@ -278,6 +297,9 @@ def find_detail_hotspots(objects, num_hotspots=5):
         mesh = obj.data
         matrix = obj.matrix_world
 
+        # Build adjacency map once per mesh - O(E) instead of O(V*E) for nested loop
+        adjacency = _build_adjacency_map(mesh)
+
         # Sample vertices and check local density/curvature
         sample_step = max(1, len(mesh.vertices) // 100)
 
@@ -286,12 +308,11 @@ def find_detail_hotspots(objects, num_hotspots=5):
             world_pos = matrix @ vert.co
 
             # Calculate local detail score based on normal variance
+            # Using adjacency map - O(degree) per vertex instead of O(E)
             neighbor_normals = []
-            for edge in mesh.edges:
-                if i in edge.vertices:
-                    other_idx = edge.vertices[0] if edge.vertices[1] == i else edge.vertices[1]
-                    if other_idx < len(mesh.vertices):
-                        neighbor_normals.append(mesh.vertices[other_idx].normal)
+            for other_idx in adjacency[i]:
+                if other_idx < len(mesh.vertices):
+                    neighbor_normals.append(mesh.vertices[other_idx].normal)
 
             if neighbor_normals:
                 avg_angle = 0

@@ -49,3 +49,20 @@ class GSCAPTURE_PT_output_panel(Panel):
         if settings.enable_checkpoints:
             col.prop(settings, "checkpoint_interval", text="Save Every N Images")
             col.prop(settings, "auto_resume", text="Auto Resume")
+
+        # Size Estimation
+        layout.separator()
+        box = layout.box()
+        box.label(text="Estimated Size:", icon='DISK_DRIVE')
+        from ..core.validation import estimate_capture_size
+        estimate = estimate_capture_size(settings, context)
+        row = box.row()
+        row.label(text=f"Images: {estimate['images_mb']:.0f} MB")
+        if estimate['depth_mb'] > 0:
+            row.label(text=f"Depth: {estimate['depth_mb']:.0f} MB")
+        if estimate['normals_mb'] > 0:
+            row = box.row()
+            row.label(text=f"Normals: {estimate['normals_mb']:.0f} MB")
+        box.label(text=f"Total: {estimate['total_gb']:.2f} GB", icon='INFO')
+        if estimate['warning']:
+            box.label(text=estimate['warning'], icon='ERROR')

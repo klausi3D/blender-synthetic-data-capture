@@ -33,21 +33,31 @@ def save_checkpoint(output_path, checkpoint_data):
             - started_at: ISO timestamp
             - updated_at: ISO timestamp
             - completed_images: List of completed image indices
+
+    Returns:
+        bool: True if checkpoint was saved successfully, False otherwise
     """
     checkpoint_path = get_checkpoint_path(output_path)
 
     # Update timestamp
     checkpoint_data['updated_at'] = datetime.now().isoformat()
 
-    # Write atomically (write to temp, then rename)
+    # Write atomically (write to temp, then replace)
     temp_path = checkpoint_path + ".tmp"
-    with open(temp_path, 'w') as f:
-        json.dump(checkpoint_data, f, indent=2)
-
-    # Rename for atomic write
-    if os.path.exists(checkpoint_path):
-        os.remove(checkpoint_path)
-    os.rename(temp_path, checkpoint_path)
+    try:
+        with open(temp_path, 'w') as f:
+            json.dump(checkpoint_data, f)  # No indent for speed
+        os.replace(temp_path, checkpoint_path)  # Atomic on all platforms
+        return True
+    except Exception as e:
+        print(f"Warning: Failed to save checkpoint: {e}")
+        # Clean up temp file if it exists
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except:
+                pass
+        return False
 
 
 def load_checkpoint(output_path):
@@ -169,13 +179,15 @@ def validate_checkpoint(output_path, settings_hash):
         if checkpoint['settings_hash'] != settings_hash:
             return False, checkpoint, "Settings have changed since checkpoint"
 
-    # Verify some completed images still exist
+    # Verify some completed images still exist and are valid
     images_path = os.path.join(output_path, "images")
     if checkpoint.get('completed_images'):
         for idx in checkpoint['completed_images'][:5]:  # Check first 5
             expected_path = os.path.join(images_path, f"image_{idx:04d}.png")
             if not os.path.exists(expected_path):
                 return False, checkpoint, "Some completed images are missing"
+            if os.path.getsize(expected_path) == 0:
+                return False, checkpoint, "Some completed images are corrupt (0 bytes)"
 
     return True, checkpoint, None
 

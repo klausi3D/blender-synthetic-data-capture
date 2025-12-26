@@ -23,6 +23,9 @@ class GSCAPTURE_PT_render_panel(Panel):
         settings = scene.gs_capture_settings
         rd = scene.render
 
+        # Render speed preset
+        layout.prop(settings, "render_speed_preset")
+
         # Use Blender's native render settings directly
         layout.prop(rd, "engine", text="Engine")
 

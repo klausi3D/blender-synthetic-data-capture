@@ -5,6 +5,7 @@ Provides various camera placement strategies for optimal 3DGS coverage.
 
 import bpy
 import math
+import random
 from mathutils import Vector
 
 
@@ -188,7 +189,6 @@ def apply_hotspot_bias(points, hotspots, bias_strength):
 
         for i in range(n_extra):
             # Perturb direction slightly for variety
-            import random
             offset = Vector((
                 random.gauss(0, 0.1),
                 random.gauss(0, 0.1),
@@ -255,7 +255,6 @@ def generate_adaptive_camera_positions(center, radius, count, hotspots,
 
         for i in range(n_extra):
             # Add variation
-            import random
             offset = Vector((
                 random.gauss(0, 0.15),
                 random.gauss(0, 0.15),
