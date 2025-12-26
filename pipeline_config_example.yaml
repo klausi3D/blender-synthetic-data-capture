@@ -1,0 +1,102 @@
+# Gaussian Splatting Training Pipeline Configuration
+# =================================================
+# Copy this file and modify for your setup
+
+# Input folders containing captured images
+# Each folder should have an 'images' subfolder or images in root
+input_folders:
+  - "/path/to/gs_capture/Object1"
+  - "/path/to/gs_capture/Object2"
+  # Or use a parent folder and --recursive flag
+
+# Output directory for trained models
+output_base: "/path/to/trained_models"
+
+# COLMAP Settings
+# ===============
+colmap:
+  enabled: true
+  binary_path: "colmap"  # Or full path like "/usr/local/bin/colmap"
+  
+  # Camera model - PINHOLE for synthetic, OPENCV for real photos
+  camera_model: "PINHOLE"
+  single_camera: true  # All images from same camera
+  
+  # Matching strategy
+  # - exhaustive: Best quality, slow for many images
+  # - sequential: Fast, for video sequences
+  # - vocab_tree: Fast for large datasets (needs vocab tree file)
+  matcher: "exhaustive"
+  vocab_tree_path: ""  # Only for vocab_tree matcher
+  
+  # Bundle adjustment - disable refinement for synthetic data with known cameras
+  ba_refine_focal_length: false
+  ba_refine_principal_point: false
+  ba_refine_extra_params: false
+  
+  # Performance
+  gpu_index: "0"
+  num_threads: -1  # -1 = auto
+  
+  # Skip COLMAP if transforms.json already exists (from Blender addon)
+  skip_if_transforms_exist: true
+
+# Training Settings
+# =================
+training:
+  # Implementation to use:
+  # - original: Official 3DGS (https://github.com/graphdeco-inria/gaussian-splatting)
+  # - nerfstudio: Nerfstudio's splatfacto (pip install nerfstudio)
+  # - gsplat: gsplat library (experimental)
+  implementation: "original"
+  
+  # Paths to implementations (auto-detected if empty)
+  gaussian_splatting_path: ""  # e.g., "/home/user/gaussian-splatting"
+  nerfstudio_path: ""
+  gsplat_path: ""
+  
+  # Training parameters
+  iterations: 30000
+  save_iterations: [7000, 15000, 30000]
+  test_iterations: [7000, 15000, 30000]
+  
+  # Densification (when to add/remove gaussians)
+  densify_from_iter: 500
+  densify_until_iter: 15000
+  densify_grad_threshold: 0.0002
+  
+  # Learning rates (defaults work well for most cases)
+  position_lr_init: 0.00016
+  position_lr_final: 0.0000016
+  feature_lr: 0.0025
+  opacity_lr: 0.05
+  scaling_lr: 0.005
+  rotation_lr: 0.001
+  
+  # For objects rendered on white background (from Blender addon)
+  white_background: true
+  
+  # Resolution: -1 for auto, or specific value like 1920
+  resolution: -1
+  
+  # GPU to use
+  gpu_id: 0
+  
+  # Nerfstudio specific
+  nerfstudio_method: "splatfacto"  # or "splatfacto-big" for higher quality
+
+# Queue Management
+# ================
+max_concurrent: 1  # Usually 1 for GPU-bound tasks
+retry_failed: true
+max_retries: 2
+
+# Logging
+# =======
+log_file: "pipeline.log"
+verbose: true
+
+# Checkpointing (allows resuming interrupted runs)
+# ================================================
+save_checkpoints: true
+checkpoint_file: "pipeline_checkpoint.json"

@@ -1,0 +1,84 @@
+# ===========================================
+# GS Blender Project - Git Ignore
+# ===========================================
+
+# ----- Output/Generated Data -----
+# Captured images and training outputs
+capture/
+output/
+outputs/
+*.ply
+*.splat
+*.pth
+*.pt
+*.bin
+*.npy
+
+# ----- Python -----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.venv/
+venv/
+ENV/
+
+# ----- IDE/Editor -----
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.pydevproject
+.settings/
+
+# ----- Claude Code -----
+.claude/
+
+# ----- OS Generated -----
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ----- Temp/Generated Files -----
+*.log
+*.tmp
+*.temp
+imgui.ini
+nul
+node_tree_dump.json
+
+# ----- Blender -----
+*.blend1
+*.blend2
+*.blend3
+*.blend4
+*.blend5
+
+# ----- Large media (if any) -----
+*.mp4
+*.mov
+*.avi
+*.mkv
