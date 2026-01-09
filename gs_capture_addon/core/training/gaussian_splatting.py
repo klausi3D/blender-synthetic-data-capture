@@ -5,10 +5,11 @@ https://github.com/graphdeco-inria/gaussian-splatting
 
 import os
 import re
-import sys
+import shutil
 from typing import Optional, List, Dict
 
 from .base import TrainingBackend, TrainingConfig, TrainingProgress, TrainingStatus
+from ...utils.paths import normalize_path, get_conda_base, get_conda_python
 
 
 class GaussianSplattingBackend(TrainingBackend):
@@ -37,13 +38,15 @@ To install 3D Gaussian Splatting:
 5. Set the path in addon preferences.
 """
 
-    def __init__(self, install_path: Optional[str] = None):
+    def __init__(self, install_path: Optional[str] = None, conda_env: Optional[str] = None):
         """Initialize backend.
 
         Args:
             install_path: Path to gaussian-splatting repository
+            conda_env: Conda environment name for 3DGS
         """
         self._install_path = install_path
+        self._conda_env = conda_env
 
     def is_available(self) -> bool:
         """Check if 3DGS is installed."""
@@ -57,12 +60,28 @@ To install 3D Gaussian Splatting:
     def get_install_path(self) -> Optional[str]:
         """Find 3DGS installation."""
         if self._install_path:
-            return self._install_path
+            return normalize_path(self._install_path)
+
+        # Check addon preferences first
+        try:
+            import bpy
+            prefs = bpy.context.preferences.addons.get('gs_capture_addon')
+            if prefs and prefs.preferences:
+                pref_path = prefs.preferences.gaussian_splatting_path
+                if pref_path:
+                    # Use normalize_path for cross-platform handling
+                    pref_path = normalize_path(pref_path)
+                    if os.path.exists(os.path.join(pref_path, "train.py")):
+                        return pref_path
+        except Exception:
+            pass  # Not in Blender context
 
         # Check environment variable
         env_path = os.environ.get("GAUSSIAN_SPLATTING_PATH")
-        if env_path and os.path.exists(env_path):
-            return env_path
+        if env_path:
+            env_path = normalize_path(env_path)
+            if os.path.exists(env_path):
+                return env_path
 
         # Search common locations
         search_paths = [
@@ -72,11 +91,38 @@ To install 3D Gaussian Splatting:
             "/opt/gaussian-splatting",
             "C:/gaussian-splatting",
             "D:/gaussian-splatting",
+            "C:/Projects/gaussian-splatting",
         ]
 
         for path in search_paths:
-            if os.path.exists(os.path.join(path, "train.py")):
-                return path
+            normalized = normalize_path(path)
+            if os.path.exists(os.path.join(normalized, "train.py")):
+                return normalized
+
+        return None
+
+    def _get_conda_env(self) -> Optional[str]:
+        """Get conda environment name from preferences."""
+        if self._conda_env:
+            return self._conda_env
+        try:
+            import bpy
+            prefs = bpy.context.preferences.addons.get('gs_capture_addon')
+            if prefs and prefs.preferences:
+                return prefs.preferences.gaussian_splatting_env
+        except Exception:
+            pass
+        return "gaussian_splatting"  # Default
+
+    def _get_conda_python_path(self) -> Optional[str]:
+        """Get Python executable from conda environment."""
+        conda_env = self._get_conda_env()
+        if not conda_env:
+            return None
+
+        python_path = get_conda_python(conda_env)
+        if python_path:
+            return python_path
 
         return None
 
@@ -122,8 +168,16 @@ To install 3D Gaussian Splatting:
 
         train_script = os.path.join(install_path, "train.py")
 
+        # Get Python from conda environment
+        python_exe = self._get_conda_python_path()
+        if not python_exe:
+            raise RuntimeError(
+                "Could not find Python in conda environment. "
+                "Please ensure the 'gaussian_splatting' conda environment exists."
+            )
+
         cmd = [
-            sys.executable,
+            python_exe,
             train_script,
             "-s", config.data_path,
             "-m", config.output_path,

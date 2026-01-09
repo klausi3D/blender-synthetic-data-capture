@@ -9,6 +9,7 @@ import shutil
 from typing import Optional, List, Dict
 
 from .base import TrainingBackend, TrainingConfig, TrainingProgress, TrainingStatus
+from ...utils.paths import normalize_path, get_conda_base, get_conda_script, get_conda_executable
 
 
 class NerfstudioBackend(TrainingBackend):
@@ -44,11 +45,46 @@ To install Nerfstudio:
 
     def is_available(self) -> bool:
         """Check if Nerfstudio is installed."""
-        return shutil.which("ns-train") is not None
+        # First check if ns-train is directly in PATH
+        if shutil.which("ns-train") is not None:
+            return True
+
+        # Check conda environment from preferences
+        conda_env = self._get_conda_env()
+        ns_train_path = get_conda_script(conda_env, "ns-train")
+        if ns_train_path:
+            return True
+        return False
+
+    def _get_conda_env(self) -> Optional[str]:
+        """Get conda environment name from preferences."""
+        if self._conda_env:
+            return self._conda_env
+        try:
+            import bpy
+            prefs = bpy.context.preferences.addons.get('gs_capture_addon')
+            if prefs and prefs.preferences:
+                return prefs.preferences.nerfstudio_env
+        except Exception:
+            pass
+        return "nerfstudio"  # Default
+
+    def _find_conda(self) -> Optional[str]:
+        """Find conda executable."""
+        return get_conda_executable()
 
     def get_install_path(self) -> Optional[str]:
         """Get ns-train executable path."""
-        return shutil.which("ns-train")
+        direct = shutil.which("ns-train")
+        if direct:
+            return normalize_path(direct)
+
+        # Check in conda environment
+        conda_env = self._get_conda_env()
+        ns_train_path = get_conda_script(conda_env, "ns-train")
+        if ns_train_path:
+            return normalize_path(ns_train_path)
+        return None
 
     def validate_data(self, data_path: str) -> tuple:
         """Validate transforms.json data format."""
@@ -72,7 +108,16 @@ To install Nerfstudio:
 
     def get_command(self, config: TrainingConfig) -> List[str]:
         """Build training command."""
+        # Find conda and environment
+        conda_path = self._find_conda()
+        conda_env = self._get_conda_env()
+
+        if not conda_path:
+            raise RuntimeError("Could not find conda. Please install Miniconda or Anaconda.")
+
+        # Use conda run to execute ns-train in the correct environment
         cmd = [
+            conda_path, "run", "-n", conda_env, "--no-capture-output",
             "ns-train", "splatfacto",
             "--data", config.data_path,
             "--output-dir", config.output_path,

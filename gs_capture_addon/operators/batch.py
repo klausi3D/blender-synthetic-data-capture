@@ -13,26 +13,98 @@ class GSCAPTURE_OT_batch_capture(Operator):
     bl_label = "Batch Capture"
     bl_options = {'REGISTER', 'UNDO'}
 
+    _timer = None
+    _items_to_capture = None
+    _current_index = 0
+    _original_output = ""
+    _original_selection = None
+    _original_active = None
+    _waiting_for_capture = False
+    _completed = 0
+    _failed = 0
+    _cancel_batch = False
+
+    @classmethod
+    def poll(cls, context):
+        return not context.scene.gs_capture_settings.is_rendering
+
     def execute(self, context):
         settings = context.scene.gs_capture_settings
-        original_output = settings.output_path
 
+        self._items_to_capture = self._build_items_to_capture(context, settings)
+        if not self._items_to_capture:
+            self.report({'ERROR'}, "No items to capture")
+            return {'CANCELLED'}
+
+        self._original_output = settings.output_path
+        self._original_selection = list(context.selected_objects)
+        self._original_active = context.view_layer.objects.active
+        self._current_index = -1
+        self._waiting_for_capture = False
+        self._completed = 0
+        self._failed = 0
+        self._cancel_batch = False
+
+        if not self._start_next_capture(context):
+            self._restore_state(context)
+            return {'CANCELLED'}
+
+        wm = context.window_manager
+        self._timer = wm.event_timer_add(0.5, window=context.window)
+        wm.modal_handler_add(self)
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        settings = context.scene.gs_capture_settings
+
+        if event.type == 'ESC':
+            self._cancel_batch = True
+            if settings.is_rendering:
+                settings.cancel_requested = True
+            return {'RUNNING_MODAL'}
+
+        if event.type == 'TIMER':
+            if self._cancel_batch:
+                if settings.is_rendering:
+                    return {'RUNNING_MODAL'}
+                self._finish(context, cancelled=True)
+                return {'CANCELLED'}
+
+            if self._waiting_for_capture and not settings.is_rendering:
+                if settings.last_capture_success:
+                    self._completed += 1
+                else:
+                    self._failed += 1
+
+                self._waiting_for_capture = False
+
+                if not self._start_next_capture(context):
+                    self._finish(context)
+                    self.report({'INFO'}, f"Batch complete: {self._completed} succeeded, {self._failed} failed")
+                    return {'FINISHED'}
+
+        return {'PASS_THROUGH'}
+
+    def _build_items_to_capture(self, context, settings):
         items_to_capture = []
 
-        if settings.batch_mode == 'SELECTED':
-            # Capture all selected as one
+        if settings.batch_mode == 'SCENE':
+            all_meshes = [obj for obj in context.scene.objects
+                          if obj.type == 'MESH' and obj.visible_get()]
+            if all_meshes:
+                items_to_capture.append(('scene', all_meshes))
+
+        elif settings.batch_mode == 'SELECTED':
             selected = [obj for obj in context.selected_objects if obj.type == 'MESH']
             if selected:
                 items_to_capture.append(('selected', selected))
 
         elif settings.batch_mode == 'EACH_SELECTED':
-            # Capture each selected object individually
             for obj in context.selected_objects:
                 if obj.type == 'MESH':
                     items_to_capture.append((obj.name, [obj]))
 
         elif settings.batch_mode == 'COLLECTION':
-            # Capture specified collection
             if settings.target_collection:
                 collection = bpy.data.collections.get(settings.target_collection)
                 if collection:
@@ -41,52 +113,72 @@ class GSCAPTURE_OT_batch_capture(Operator):
                         items_to_capture.append((collection.name, meshes))
 
         elif settings.batch_mode == 'COLLECTIONS':
-            # Capture each collection separately
             for collection in bpy.data.collections:
                 meshes = self._get_collection_meshes(collection, settings.include_nested_collections)
                 if meshes:
                     items_to_capture.append((collection.name, meshes))
 
         elif settings.batch_mode == 'GROUPS':
-            # Use custom object groups
             for group in settings.object_groups:
                 meshes = [item.obj for item in group.objects if item.obj and item.obj.type == 'MESH']
                 if meshes:
                     items_to_capture.append((group.name, meshes))
 
-        if not items_to_capture:
-            self.report({'ERROR'}, "No items to capture")
-            return {'CANCELLED'}
+        return items_to_capture
 
-        # Process each item
-        completed = 0
-        failed = 0
+    def _start_next_capture(self, context):
+        settings = context.scene.gs_capture_settings
+        self._current_index += 1
 
-        for name, objects in items_to_capture:
-            # Set output path for this item
-            settings.output_path = os.path.join(bpy.path.abspath(original_output), name)
+        if self._current_index >= len(self._items_to_capture):
+            return False
 
-            # Select objects
-            bpy.ops.object.select_all(action='DESELECT')
-            for obj in objects:
-                obj.select_set(True)
+        name, objects = self._items_to_capture[self._current_index]
 
-            # Run capture
-            try:
-                result = bpy.ops.gs_capture.capture_selected()
-                if result == {'FINISHED'}:
-                    completed += 1
-                else:
-                    failed += 1
-            except Exception as e:
-                self.report({'WARNING'}, f"Failed to capture {name}: {e}")
-                failed += 1
+        settings.output_path = os.path.join(bpy.path.abspath(self._original_output), name)
 
-        # Restore original output path
-        settings.output_path = original_output
+        bpy.ops.object.select_all(action='DESELECT')
+        for obj in objects:
+            obj.select_set(True)
+        if objects:
+            context.view_layer.objects.active = objects[0]
 
-        self.report({'INFO'}, f"Batch complete: {completed} succeeded, {failed} failed")
-        return {'FINISHED'}
+        try:
+            result = bpy.ops.gs_capture.capture_selected()
+        except Exception as e:
+            self.report({'WARNING'}, f"Failed to capture {name}: {e}")
+            self._failed += 1
+            return self._start_next_capture(context)
+
+        if result == {'CANCELLED'}:
+            self._failed += 1
+            return self._start_next_capture(context)
+
+        self._waiting_for_capture = True
+        return True
+
+    def _finish(self, context, cancelled=False):
+        self._restore_state(context)
+        if cancelled:
+            self.report({'WARNING'}, "Batch capture cancelled")
+
+    def _restore_state(self, context):
+        settings = context.scene.gs_capture_settings
+
+        if self._timer:
+            context.window_manager.event_timer_remove(self._timer)
+            self._timer = None
+
+        settings.output_path = self._original_output
+
+        bpy.ops.object.select_all(action='DESELECT')
+        if self._original_selection:
+            for obj in self._original_selection:
+                if obj and obj.name in bpy.data.objects:
+                    obj.select_set(True)
+
+        if self._original_active and self._original_active.name in bpy.data.objects:
+            context.view_layer.objects.active = self._original_active
 
     def _get_collection_meshes(self, collection, include_nested):
         """Get mesh objects from collection."""

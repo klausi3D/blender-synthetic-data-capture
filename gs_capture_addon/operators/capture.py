@@ -5,6 +5,7 @@ Includes checkpoint support, depth/normal/mask export.
 
 import bpy
 import os
+import time
 from bpy.types import Operator
 from mathutils import Vector
 
@@ -19,6 +20,8 @@ from ..core.export import (
     export_colmap_cameras,
     export_transforms_json,
     cleanup_compositor_nodes,
+    extract_alpha_mask,
+    get_image_extension,
 )
 from ..utils.lighting import (
     setup_neutral_lighting,
@@ -43,28 +46,32 @@ class GSCAPTURE_OT_capture_selected(Operator):
     bl_label = "Capture Selected"
     bl_options = {'REGISTER', 'UNDO'}
 
-    _timer = None
-    _cameras = []
-    _current_camera_index = 0
-    _output_path = ""
-    _original_camera = None
-    _original_light_states = {}
-    _original_materials = {}
-    _original_file_format = None
-    _original_hide_render = {}
-    _original_film_transparent = False
-    _target_objects = []
-    _adaptive_result = None
-    _target_format = 'PNG'
-    _save_manually = False
-    _checkpoint_data = None
-    _images_to_render = []  # Indices of images that need rendering
-    _depth_output_node = None
-    _normal_output_node = None
-    _mask_output_node = None
-    _original_engine = None
-    _original_eevee_samples = None
-    _original_cycles_samples = None
+    # Note: Instance variables are initialized in execute() to avoid
+    # class-level mutable defaults being shared across instances.
+    # These type hints document the expected instance attributes.
+    _timer: object
+    _cameras: list
+    _current_camera_index: int
+    _output_path: str
+    _original_camera: object
+    _original_light_states: dict
+    _original_materials: dict
+    _original_file_format: object
+    _original_hide_render: dict
+    _original_film_transparent: bool
+    _target_objects: list
+    _adaptive_result: object
+    _target_format: str
+    _image_ext: str
+    _save_manually: bool
+    _checkpoint_data: dict
+    _images_to_render: list
+    _depth_output_node: object
+    _normal_output_node: object
+    _mask_output_node: object
+    _original_engine: object
+    _original_eevee_samples: object
+    _original_cycles_samples: object
 
     def _get_all_children(self, obj):
         """Recursively get all children of an object."""
@@ -100,7 +107,18 @@ class GSCAPTURE_OT_capture_selected(Operator):
         """Setup compositor nodes for depth, normal, and mask outputs."""
         scene = context.scene
         scene.use_nodes = True
+
+        # In Blender 5.0+, node_tree may not exist immediately
+        # Force update by accessing through view_layer
+        if not hasattr(scene, 'node_tree') or scene.node_tree is None:
+            # Trigger node tree creation by toggling use_nodes
+            scene.use_nodes = False
+            scene.use_nodes = True
+
         tree = scene.node_tree
+        if tree is None:
+            self.report({'WARNING'}, "Could not create compositor node tree")
+            return
 
         # Get or create render layers node
         render_layers = None
@@ -113,7 +131,7 @@ class GSCAPTURE_OT_capture_selected(Operator):
             render_layers.location = (0, 0)
 
         # Enable required passes
-        view_layer = scene.view_layers["ViewLayer"]
+        view_layer = context.view_layer
 
         if settings.export_depth:
             view_layer.use_pass_z = True
@@ -123,7 +141,7 @@ class GSCAPTURE_OT_capture_selected(Operator):
             view_layer.use_pass_normal = True
             self._setup_normal_output(tree, render_layers)
 
-        if settings.export_masks:
+        if settings.export_masks and settings.mask_source == 'OBJECT_INDEX':
             view_layer.use_pass_object_index = True
             # Set object indices
             for i, obj in enumerate(self._target_objects):
@@ -168,25 +186,53 @@ class GSCAPTURE_OT_capture_selected(Operator):
         self._normal_output_node = file_output
 
     def _setup_mask_output(self, tree, render_layers):
-        """Setup object mask output node."""
-        # ID Mask node
-        id_mask = tree.nodes.new('CompositorNodeIDMask')
-        id_mask.name = "GS_ID_Mask"
-        id_mask.location = (300, -400)
-        id_mask.index = 1
-        id_mask.use_antialiasing = True
+        """Setup object mask output node for all target objects.
+
+        Creates ID mask nodes for each target object index and combines
+        them to create a single mask covering all target objects.
+        """
+        num_objects = len(self._target_objects)
+
+        if num_objects == 0:
+            return
+
+        # Create ID Mask nodes for each object index
+        id_masks = []
+        for i in range(num_objects):
+            id_mask = tree.nodes.new('CompositorNodeIDMask')
+            id_mask.name = f"GS_ID_Mask_{i}"
+            id_mask.location = (300, -400 - i * 100)
+            id_mask.index = i + 1  # Object indices start at 1
+            id_mask.use_antialiasing = True
+            tree.links.new(render_layers.outputs['IndexOB'], id_mask.inputs[0])
+            id_masks.append(id_mask)
+
+        # Combine masks using Maximum math nodes
+        if len(id_masks) == 1:
+            # Only one object, use its mask directly
+            combined_output = id_masks[0].outputs[0]
+        else:
+            # Combine multiple masks with Maximum nodes
+            combined_output = id_masks[0].outputs[0]
+            for i in range(1, len(id_masks)):
+                math_node = tree.nodes.new('CompositorNodeMath')
+                math_node.name = f"GS_Mask_Combine_{i}"
+                math_node.operation = 'MAXIMUM'
+                math_node.location = (500, -400 - (i - 1) * 50)
+                tree.links.new(combined_output, math_node.inputs[0])
+                tree.links.new(id_masks[i].outputs[0], math_node.inputs[1])
+                combined_output = math_node.outputs[0]
 
         # File output for mask
         file_output = tree.nodes.new('CompositorNodeOutputFile')
         file_output.name = "GS_Mask_Output"
-        file_output.location = (500, -400)
+        file_output.location = (700, -400)
         file_output.base_path = os.path.join(self._output_path, "masks")
         file_output.format.file_format = 'PNG'
         file_output.format.color_mode = 'BW'
 
-        # Connect
-        tree.links.new(render_layers.outputs['IndexOB'], id_mask.inputs[0])
-        tree.links.new(id_mask.outputs[0], file_output.inputs[0])
+        # Connect combined mask to output
+        tree.links.new(combined_output, file_output.inputs[0])
 
         self._mask_output_node = file_output
 
@@ -202,8 +248,35 @@ class GSCAPTURE_OT_capture_selected(Operator):
             self._mask_output_node.file_slots[0].path = f"mask_{index:04d}"
 
     def execute(self, context):
+        # Initialize instance variables (avoid class-level mutable defaults)
+        self._timer = None
+        self._cameras = []
+        self._current_camera_index = 0
+        self._output_path = ""
+        self._original_camera = None
+        self._original_light_states = {}
+        self._original_materials = {}
+        self._original_file_format = None
+        self._original_hide_render = {}
+        self._original_film_transparent = False
+        self._target_objects = []
+        self._adaptive_result = None
+        self._target_format = 'PNG'
+        self._image_ext = 'png'
+        self._save_manually = False
+        self._checkpoint_data = None
+        self._images_to_render = []
+        self._depth_output_node = None
+        self._normal_output_node = None
+        self._mask_output_node = None
+        self._original_engine = None
+        self._original_eevee_samples = None
+        self._original_cycles_samples = None
+
         settings = context.scene.gs_capture_settings
         rd = context.scene.render
+
+        settings.cancel_requested = False
 
         # Apply render speed preset
         self._original_engine = rd.engine
@@ -346,6 +419,7 @@ class GSCAPTURE_OT_capture_selected(Operator):
         # Store original file format for potential restoration
         self._original_file_format = rd.image_settings.file_format
         self._target_format = rd.image_settings.file_format
+        self._image_ext = get_image_extension(self._target_format)
         self._save_manually = False
 
         # Ensure RGBA mode for PNG
@@ -361,8 +435,13 @@ class GSCAPTURE_OT_capture_selected(Operator):
             self._save_manually = True
             self.report({'INFO'}, "Scene in video mode - will save images manually")
 
-        # Setup compositor for depth/normal/mask exports
-        if settings.export_depth or settings.export_normals or settings.export_masks:
+        # Setup compositor for depth/normal/mask exports (not needed for alpha masks)
+        needs_compositor = (
+            settings.export_depth or
+            settings.export_normals or
+            (settings.export_masks and settings.mask_source == 'OBJECT_INDEX')
+        )
+        if needs_compositor:
             self._setup_compositor_outputs(context, settings)
 
         # Start rendering
@@ -370,15 +449,36 @@ class GSCAPTURE_OT_capture_selected(Operator):
         settings.is_rendering = True
         settings.render_progress = 0.0
 
+        # Initialize extended progress tracking
+        total_to_render = len(self._images_to_render)
+        settings.capture_current = 0
+        settings.capture_total = total_to_render
+        settings.capture_start_time = time.time()
+        settings.capture_elapsed_seconds = 0.0
+        settings.capture_eta_seconds = 0.0
+        settings.capture_rate = 0.0
+        settings.capture_current_camera = ""
+        settings.capture_current_object = ", ".join([obj.name for obj in self._target_objects[:3]])
+        if len(self._target_objects) > 3:
+            settings.capture_current_object += f" (+{len(self._target_objects) - 3} more)"
+
         # Add timer for modal
         wm = context.window_manager
         self._timer = wm.event_timer_add(0.1, window=context.window)
         wm.modal_handler_add(self)
 
+        # Start built-in progress bar
+        wm.progress_begin(0, total_to_render)
+
         return {'RUNNING_MODAL'}
 
     def modal(self, context, event):
         settings = context.scene.gs_capture_settings
+
+        if settings.cancel_requested:
+            settings.cancel_requested = False
+            self.cancel(context)
+            return {'CANCELLED'}
 
         if event.type == 'ESC':
             self.cancel(context)
@@ -398,17 +498,7 @@ class GSCAPTURE_OT_capture_selected(Operator):
             self._update_output_filenames(actual_index)
 
             # Set output path with correct extension for file format
-            format_to_ext = {
-                'PNG': 'png',
-                'JPEG': 'jpg',
-                'OPEN_EXR': 'exr',
-                'OPEN_EXR_MULTILAYER': 'exr',
-                'TARGA': 'tga',
-                'TARGA_RAW': 'tga',
-                'BMP': 'bmp',
-                'TIFF': 'tiff',
-            }
-            ext = format_to_ext.get(self._target_format, 'png')
+            ext = self._image_ext or 'png'
             image_path = os.path.join(
                 self._output_path, "images",
                 f"image_{actual_index:04d}.{ext}"
@@ -416,8 +506,31 @@ class GSCAPTURE_OT_capture_selected(Operator):
 
             # Render and save
             save_success = False
+            need_alpha_mask = settings.export_masks and settings.mask_source == 'ALPHA'
+
             try:
-                if self._save_manually:
+                # If we need alpha mask, render and then extract from saved file
+                if need_alpha_mask:
+                    bpy.ops.render.render()
+                    render_result = bpy.data.images.get('Render Result')
+                    if render_result:
+                        # Save the image first
+                        render_result.save_render(filepath=image_path)
+
+                        # Extract mask from the saved image file (more reliable than reading render buffer)
+                        if settings.mask_format == 'GSL':
+                            mask_path = os.path.join(
+                                self._output_path, "masks",
+                                f"image_{actual_index:04d}.{ext}.png"
+                            )
+                        else:
+                            mask_path = os.path.join(
+                                self._output_path, "masks",
+                                f"mask_{actual_index:04d}.png"
+                            )
+                        # Load the saved image and extract alpha channel
+                        extract_alpha_mask(image_path, mask_path)
+                elif self._save_manually:
                     bpy.ops.render.render()
                     render_result = bpy.data.images.get('Render Result')
                     if render_result:
@@ -450,6 +563,26 @@ class GSCAPTURE_OT_capture_selected(Operator):
             settings.render_progress = (self._current_camera_index / total_to_render) * 100
             settings.current_render_info = f"Rendering {self._current_camera_index}/{total_to_render}"
 
+            # Update extended progress tracking
+            settings.capture_current = self._current_camera_index
+            elapsed = time.time() - settings.capture_start_time
+            settings.capture_elapsed_seconds = elapsed
+            
+            if self._current_camera_index > 0:
+                settings.capture_rate = self._current_camera_index / elapsed
+                remaining = total_to_render - self._current_camera_index
+                settings.capture_eta_seconds = remaining / settings.capture_rate if settings.capture_rate > 0 else 0
+            
+            settings.capture_current_camera = cam.name if cam else ""
+            
+            # Update built-in progress bar
+            context.window_manager.progress_update(self._current_camera_index)
+            
+            # Force UI redraw
+            for area in context.screen.areas:
+                if area.type == 'VIEW_3D':
+                    area.tag_redraw()
+
         return {'RUNNING_MODAL'}
 
     def finish(self, context):
@@ -462,7 +595,8 @@ class GSCAPTURE_OT_capture_selected(Operator):
             os.makedirs(colmap_path, exist_ok=True)
             export_colmap_cameras(
                 self._cameras, colmap_path,
-                rd.resolution_x, rd.resolution_y
+                rd.resolution_x, rd.resolution_y,
+                image_ext=self._image_ext or get_image_extension(rd.image_settings.file_format)
             )
 
         if settings.export_transforms_json:
@@ -470,17 +604,32 @@ class GSCAPTURE_OT_capture_selected(Operator):
                 self._cameras, self._output_path,
                 rd.resolution_x, rd.resolution_y,
                 include_depth=settings.export_depth,
-                include_masks=settings.export_masks
+                include_masks=settings.export_masks,
+                image_ext=self._image_ext or get_image_extension(rd.image_settings.file_format),
+                depth_ext='png',
+                mask_ext='png',
+                mask_format=settings.mask_format
             )
 
         # Clear checkpoint on success
         if settings.enable_checkpoints:
             clear_checkpoint(self._output_path)
 
+        # Store last capture stats before cleanup
+        elapsed = time.time() - settings.capture_start_time
+        settings.last_capture_images = len(self._cameras)
+        settings.last_capture_duration = elapsed
+        settings.last_capture_path = self._output_path
+        settings.last_capture_success = True
+
+        # End built-in progress bar
+        context.window_manager.progress_end()
+
         # Cleanup
         self.cleanup(context)
 
         settings.is_rendering = False
+        settings.cancel_requested = False
         settings.render_progress = 100.0
         settings.current_render_info = "Complete!"
 
@@ -543,9 +692,43 @@ class GSCAPTURE_OT_capture_selected(Operator):
             self.report({'WARNING'},
                         f"Cancelled. Progress saved ({len(self._checkpoint_data.get('completed_images', []))} images)")
 
+        # Store partial capture stats
+        elapsed = time.time() - settings.capture_start_time if settings.capture_start_time > 0 else 0
+        settings.last_capture_images = settings.capture_current
+        settings.last_capture_duration = elapsed
+        settings.last_capture_path = self._output_path
+        settings.last_capture_success = False
+
+        # End built-in progress bar
+        context.window_manager.progress_end()
+
         self.cleanup(context)
         settings.is_rendering = False
+        settings.cancel_requested = False
         settings.current_render_info = "Cancelled"
+        
+        # Reset progress tracking
+        settings.capture_current = 0
+        settings.capture_eta_seconds = 0
+        settings.capture_rate = 0
+
+
+class GSCAPTURE_OT_cancel_capture(Operator):
+    """Cancel the current capture session."""
+    bl_idname = "gs_capture.cancel_capture"
+    bl_label = "Cancel Capture"
+    bl_description = "Cancel the active capture session"
+    bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.scene.gs_capture_settings.is_rendering
+
+    def execute(self, context):
+        settings = context.scene.gs_capture_settings
+        settings.cancel_requested = True
+        self.report({'INFO'}, "Cancel requested")
+        return {'FINISHED'}
 
 
 class GSCAPTURE_OT_capture_collection(Operator):

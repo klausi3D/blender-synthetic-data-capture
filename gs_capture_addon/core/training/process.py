@@ -7,8 +7,13 @@ import subprocess
 import threading
 import time
 import os
+import sys
+import re
 from typing import Optional, Callable
 from queue import Queue, Empty
+
+# Pattern to remove ANSI escape codes
+ANSI_ESCAPE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
 
 from .base import TrainingBackend, TrainingConfig, TrainingProgress, TrainingStatus
 
@@ -17,6 +22,7 @@ class TrainingProcess:
     """Manages a training subprocess with progress tracking."""
 
     _active_process: Optional['TrainingProcess'] = None
+    _active_process_lock = threading.Lock()  # Thread-safe access to _active_process
 
     def __init__(
         self,
@@ -39,13 +45,21 @@ class TrainingProcess:
         self._thread: Optional[threading.Thread] = None
         self._progress = TrainingProgress()
         self._output_queue = Queue()
+        self._output_history = []  # Keep all output for error diagnosis
         self._stop_requested = False
         self._start_time = 0
 
     @classmethod
     def get_running_process(cls) -> Optional['TrainingProcess']:
         """Get currently running training process."""
-        return cls._active_process
+        with cls._active_process_lock:
+            return cls._active_process
+
+    @classmethod
+    def clear_active_process(cls) -> None:
+        """Clear the active process reference (thread-safe)."""
+        with cls._active_process_lock:
+            cls._active_process = None
 
     @property
     def is_running(self) -> bool:
@@ -85,16 +99,33 @@ class TrainingProcess:
             self._progress.error = str(e)
             return False
 
-        # Start process
+        # Start process with unbuffered output
         try:
-            self._process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-                cwd=self.backend.get_install_path()
-            )
+            # Set environment for unbuffered Python output
+            env = os.environ.copy()
+            env['PYTHONUNBUFFERED'] = '1'
+
+            # Log command for debugging
+            cmd_str = ' '.join(cmd)
+            self._output_history.append(f"[GS Capture] Starting: {cmd_str}")
+            self._output_history.append(f"[GS Capture] Working dir: {self.backend.get_install_path()}")
+
+            # Subprocess configuration for reliable output capture
+            kwargs = {
+                'stdin': subprocess.DEVNULL,  # Prevent blocking on input
+                'stdout': subprocess.PIPE,
+                'stderr': subprocess.STDOUT,
+                'text': True,
+                'bufsize': 1,
+                'cwd': self.backend.get_install_path(),
+                'env': env,
+            }
+
+            if sys.platform == 'win32':
+                # CREATE_NO_WINDOW prevents console popup
+                kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+
+            self._process = subprocess.Popen(cmd, **kwargs)
         except Exception as e:
             self._progress.status = TrainingStatus.FAILED
             self._progress.error = f"Failed to start process: {e}"
@@ -109,8 +140,9 @@ class TrainingProcess:
         self._thread = threading.Thread(target=self._read_output, daemon=True)
         self._thread.start()
 
-        # Register as active process
-        TrainingProcess._active_process = self
+        # Register as active process (thread-safe)
+        with TrainingProcess._active_process_lock:
+            TrainingProcess._active_process = self
 
         return True
 
@@ -126,9 +158,7 @@ class TrainingProcess:
                 self._process.kill()
 
         self._progress.status = TrainingStatus.CANCELLED
-
-        if TrainingProcess._active_process == self:
-            TrainingProcess._active_process = None
+        # NOTE: Don't clear _active_process - user should click Close to clear
 
     def _read_output(self) -> None:
         """Read process output in background thread."""
@@ -137,8 +167,17 @@ class TrainingProcess:
                 if self._stop_requested:
                     break
 
-                # Parse progress
-                parsed = self.backend.parse_output(line)
+                # Clean ANSI escape codes (from tqdm progress bars)
+                clean_line = ANSI_ESCAPE.sub('', line).rstrip()
+
+                # Store ALL output for debugging (keep last 200 lines)
+                if clean_line:  # Only store non-empty lines
+                    self._output_history.append(clean_line)
+                    if len(self._output_history) > 200:
+                        self._output_history.pop(0)
+
+                # Parse progress (use cleaned line)
+                parsed = self.backend.parse_output(clean_line)
                 if parsed:
                     self._progress.iteration = parsed.iteration or self._progress.iteration
                     self._progress.loss = parsed.loss or self._progress.loss
@@ -162,8 +201,9 @@ class TrainingProcess:
                     if self.progress_callback:
                         self.progress_callback(self._progress)
 
-                # Store in queue for retrieval
-                self._output_queue.put(line)
+                # Store in queue for retrieval (for log panel) - use cleaned line
+                if clean_line:
+                    self._output_queue.put(clean_line)
 
         except Exception as e:
             self._progress.error = str(e)
@@ -176,16 +216,34 @@ class TrainingProcess:
 
                 if return_code != 0 and self._progress.status == TrainingStatus.RUNNING:
                     self._progress.status = TrainingStatus.FAILED
-                    self._progress.error = f"Process exited with code {return_code}"
+                    # Get last few lines of output for error context
+                    error_context = self._get_error_context()
+                    self._progress.error = f"Process exited with code {return_code}\n{error_context}"
                 elif self._progress.status == TrainingStatus.RUNNING:
                     self._progress.status = TrainingStatus.COMPLETED
 
-            if TrainingProcess._active_process == self:
-                TrainingProcess._active_process = None
+            # NOTE: Don't clear _active_process here!
+            # Keep it so user can see the log/error after training ends.
+            # User must click "Close" button to clear it.
 
             # Final callback
             if self.progress_callback:
                 self.progress_callback(self._progress)
+
+    def _get_error_context(self) -> str:
+        """Get last few lines of output that might contain error info."""
+        # Look for error-related lines in recent output
+        error_lines = []
+        for line in self._output_history[-30:]:
+            line_lower = line.lower()
+            if any(kw in line_lower for kw in ['error', 'exception', 'traceback', 'failed', 'cuda', 'oom', 'killed']):
+                error_lines.append(line)
+
+        if error_lines:
+            return '\n'.join(error_lines[-5:])  # Last 5 error-related lines
+
+        # If no error lines found, return last 5 lines
+        return '\n'.join(self._output_history[-5:]) if self._output_history else "No output captured"
 
     def get_output_lines(self, max_lines: int = 100) -> list:
         """Get recent output lines.
@@ -196,13 +254,8 @@ class TrainingProcess:
         Returns:
             List of output lines
         """
-        lines = []
-        try:
-            while len(lines) < max_lines:
-                lines.append(self._output_queue.get_nowait())
-        except Empty:
-            pass
-        return lines
+        # Return from history (doesn't consume items)
+        return self._output_history[-max_lines:]
 
     def get_result_path(self) -> Optional[str]:
         """Get path to training result.

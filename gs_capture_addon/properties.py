@@ -16,6 +16,35 @@ from bpy.props import (
 from bpy.types import PropertyGroup
 
 
+def get_training_backend_items(self, context):
+    """Dynamic enum callback for training backend selection.
+
+    Returns items for both built-in and custom backends.
+    """
+    items = [
+        ('gaussian_splatting', "3D Gaussian Splatting", "Original 3DGS implementation"),
+        ('gs_lightning', "GS-Lightning", "Gaussian Splatting Lightning - supports masks"),
+        ('nerfstudio', "Nerfstudio", "Nerfstudio splatfacto"),
+        ('gsplat', "gsplat", "Optimized gsplat library"),
+    ]
+
+    # Try to add custom backends
+    try:
+        from .core.training import load_custom_backends
+        custom_backends = load_custom_backends()
+        for backend_id, backend in custom_backends.items():
+            items.append((
+                backend_id,
+                f"{backend.name} (Custom)",
+                backend.description or f"Custom backend: {backend.name}"
+            ))
+    except Exception:
+        # If loading fails, just use built-in backends
+        pass
+
+    return items
+
+
 class GSCaptureObjectItem(PropertyGroup):
     """Single object reference for grouping."""
     obj: PointerProperty(
@@ -85,6 +114,26 @@ class GSCaptureSettings(PropertyGroup):
         name="Export Object Masks",
         description="Export binary masks for target objects",
         default=False
+    )
+
+    mask_source: EnumProperty(
+        name="Mask Source",
+        description="How to generate the mask",
+        items=[
+            ('ALPHA', "Alpha Channel", "Extract mask from transparent background (recommended for isolated objects)"),
+            ('OBJECT_INDEX', "Object Index", "Use Blender's Object Index pass"),
+        ],
+        default='ALPHA'
+    )
+
+    mask_format: EnumProperty(
+        name="Mask Format",
+        description="Mask file naming format",
+        items=[
+            ('GSL', "GS-Lightning", "image_0001.png.png - for gaussian-splatting-lightning"),
+            ('STANDARD', "Standard", "mask_0001.png - separate mask folder"),
+        ],
+        default='GSL'
     )
 
     # ==========================================================================
@@ -268,13 +317,14 @@ class GSCaptureSettings(PropertyGroup):
     batch_mode: EnumProperty(
         name="Batch Mode",
         items=[
-            ('SELECTED', "Selected Objects", "Capture each selected object separately"),
+            ('SCENE', "Entire Scene", "Capture all visible mesh objects as one scene"),
+            ('SELECTED', "Selected Objects", "Capture all selected objects as one scene"),
             ('COLLECTION', "Collection", "Capture entire collection as one"),
             ('EACH_SELECTED', "Each Selected", "Capture each selected object individually"),
             ('COLLECTIONS', "All Collections", "Capture each collection separately"),
             ('GROUPS', "Object Groups", "Use custom object groups"),
         ],
-        default='SELECTED'
+        default='SCENE'
     )
 
     target_collection: StringProperty(
@@ -362,8 +412,25 @@ class GSCaptureSettings(PropertyGroup):
     # ==========================================================================
 
     is_rendering: BoolProperty(default=False)
-    render_progress: FloatProperty(default=0.0)
+    render_progress: FloatProperty(default=0.0, min=0.0, max=100.0, subtype='PERCENTAGE')
     current_render_info: StringProperty(default="")
+    cancel_requested: BoolProperty(default=False, description="Request to cancel current capture")
+
+    # Extended progress tracking
+    capture_current: IntProperty(default=0, description="Current image being rendered")
+    capture_total: IntProperty(default=0, description="Total images to render")
+    capture_start_time: FloatProperty(default=0.0, description="Capture start timestamp")
+    capture_elapsed_seconds: FloatProperty(default=0.0, description="Elapsed time in seconds")
+    capture_eta_seconds: FloatProperty(default=0.0, description="Estimated time remaining")
+    capture_rate: FloatProperty(default=0.0, description="Images per second")
+    capture_current_camera: StringProperty(default="", description="Name of current camera")
+    capture_current_object: StringProperty(default="", description="Current object/batch being captured")
+
+    # Last capture stats (persisted after completion)
+    last_capture_images: IntProperty(default=0, description="Images from last capture")
+    last_capture_duration: FloatProperty(default=0.0, description="Duration of last capture in seconds")
+    last_capture_path: StringProperty(default="", description="Output path of last capture")
+    last_capture_success: BoolProperty(default=False, description="Whether last capture completed successfully")
 
     # Analysis results storage
     analysis_vertex_count: IntProperty(default=0)
@@ -406,13 +473,8 @@ class GSCaptureSettings(PropertyGroup):
 
     training_backend: EnumProperty(
         name="Training Backend",
-        description="Training framework to use",
-        items=[
-            ('gaussian_splatting', "3D Gaussian Splatting", "Original 3DGS implementation"),
-            ('nerfstudio', "Nerfstudio", "Nerfstudio splatfacto"),
-            ('gsplat', "gsplat", "Optimized gsplat library"),
-        ],
-        default='gaussian_splatting'
+        description="Training framework to use (includes custom backends)",
+        items=get_training_backend_items,
     )
 
     training_data_path: StringProperty(

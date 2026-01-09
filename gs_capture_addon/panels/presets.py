@@ -100,17 +100,22 @@ class GSCAPTURE_PT_PresetsPanel(Panel):
                 notes_box = box.box()
                 notes_box.scale_y = 0.7
 
-                # Wrap notes text
-                words = preset.notes.split()
-                line = ""
-                for word in words:
-                    if len(line + word) > 40:
-                        notes_box.label(text=line, icon='BLANK1')
-                        line = word + " "
-                    else:
-                        line += word + " "
-                if line:
-                    notes_box.label(text=line.strip(), icon='BLANK1')
+                # Handle notes as list or string
+                if isinstance(preset.notes, list):
+                    for note in preset.notes:
+                        notes_box.label(text=note, icon='INFO')
+                else:
+                    # Wrap notes text (legacy string format)
+                    words = preset.notes.split()
+                    line = ""
+                    for word in words:
+                        if len(line + word) > 40:
+                            notes_box.label(text=line, icon='BLANK1')
+                            line = word + " "
+                        else:
+                            line += word + " "
+                    if line:
+                        notes_box.label(text=line.strip(), icon='BLANK1')
 
 
 class GSCAPTURE_PT_PresetsQuickSettings(Panel):

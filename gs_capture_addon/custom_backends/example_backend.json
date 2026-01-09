@@ -1,0 +1,91 @@
+{
+  "schema_version": "1.0",
+  "id": "example_json",
+  "name": "Example JSON Backend",
+  "description": "Template for custom Gaussian Splatting training backends (JSON format)",
+  "version": "1.0.0",
+  "website": "https://github.com/example/gs-trainer",
+
+  "detection": {
+    "method": "file",
+    "check_file": "train.py"
+  },
+
+  "install_path": {
+    "preference_key": "custom_backend_path",
+    "env_var": "CUSTOM_GS_PATH",
+    "search_paths": [
+      "~/custom-gs",
+      "C:/Projects/custom-gs"
+    ]
+  },
+
+  "environment": {
+    "type": "conda",
+    "name": "custom_gs_env",
+    "preference_key": "custom_backend_env"
+  },
+
+  "data_format": {
+    "type": "colmap",
+    "required_dirs": [
+      "images",
+      "sparse/0"
+    ],
+    "required_files": [
+      "sparse/0/cameras.txt",
+      "sparse/0/images.txt",
+      "sparse/0/points3D.txt"
+    ],
+    "alternative_files": [
+      "sparse/0/cameras.bin",
+      "sparse/0/images.bin",
+      "sparse/0/points3D.bin"
+    ]
+  },
+
+  "command": {
+    "script": "train.py",
+    "template": "{python} {script} --source_path {data_path} --model_path {output_path} --iterations {iterations} {white_background} {extra_args}",
+    "flags": {
+      "white_background": "--white_background"
+    }
+  },
+
+  "output_parsing": {
+    "iteration": {
+      "pattern": "\\[ITER\\s*(\\d+)\\]",
+      "group": 1
+    },
+    "loss": {
+      "pattern": "loss[=:\\s]+([\\d.]+)",
+      "group": 1
+    },
+    "psnr": {
+      "pattern": "PSNR[=:\\s]+([\\d.]+)",
+      "group": 1
+    },
+    "completion": {
+      "patterns": [
+        "Training complete",
+        "Finished",
+        "Done"
+      ]
+    },
+    "error": {
+      "patterns": [
+        "error",
+        "exception",
+        "failed",
+        "CUDA out of memory"
+      ],
+      "case_sensitive": false
+    }
+  },
+
+  "output_files": {
+    "model_path": "point_cloud/iteration_{iterations}/point_cloud.ply"
+  },
+
+  "install_instructions": "To install this custom backend:\n\n1. Clone the repository:\n   git clone https://github.com/example/gs-trainer\n\n2. Create conda environment:\n   conda create -n custom_gs_env python=3.10\n   conda activate custom_gs_env\n\n3. Install dependencies:\n   pip install -r requirements.txt\n\n4. Set path in Blender addon preferences"
+}

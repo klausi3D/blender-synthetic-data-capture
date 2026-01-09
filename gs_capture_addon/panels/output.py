@@ -40,6 +40,20 @@ class GSCAPTURE_PT_output_panel(Panel):
         col.prop(settings, "export_normals", text="Normal Maps")
         col.prop(settings, "export_masks", text="Object Masks")
 
+        # Mask options when enabled
+        if settings.export_masks:
+            box = layout.box()
+            box.label(text="Mask Settings:", icon='MOD_MASK')
+            box.prop(settings, "mask_source")
+            box.prop(settings, "mask_format")
+
+            # Info about mask format
+            if settings.mask_format == 'GSL':
+                box.label(text="For GS-Lightning training", icon='INFO')
+
+            if settings.mask_source == 'ALPHA':
+                box.label(text="Requires transparent background", icon='INFO')
+
         # Checkpoint settings
         layout.separator()
         layout.label(text="Resume/Checkpoint:", icon='FILE_REFRESH')
