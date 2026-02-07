@@ -11,6 +11,8 @@ from enum import Enum
 from typing import List, Optional, Tuple
 import bpy
 
+from ..utils.coverage import CoverageAnalyzer
+
 
 class ValidationLevel(Enum):
     """Severity level for validation issues."""
@@ -408,10 +410,83 @@ class CoverageValidator:
                 "Increase camera count for better coverage"
             )
 
-        # TODO: Implement detailed coverage analysis using utils/coverage.py
-        # For now, just do basic validation
+        mesh_objects = self._get_target_objects(context, settings)
+        if not mesh_objects:
+            result.add_info(
+                "coverage",
+                "Coverage validation skipped (no mesh objects found)"
+            )
+            return result
+
+        total_vertices = sum(
+            len(obj.data.vertices)
+            for obj in mesh_objects
+            if obj.type == 'MESH' and obj.data
+        )
+
+        if total_vertices == 0:
+            result.add_info(
+                "coverage",
+                "Coverage validation skipped (no vertices found)"
+            )
+            return result
+
+        # Skip heavy analysis for very large meshes to avoid blocking the UI.
+        if total_vertices > 200000:
+            result.add_info(
+                "coverage",
+                f"Coverage validation skipped for {total_vertices} vertices. "
+                "Use the Coverage Heatmap for detailed analysis."
+            )
+            return result
+
+        analyzer = CoverageAnalyzer(mesh_objects, cameras)
+        coverage = analyzer.calculate_vertex_coverage()
+        stats = analyzer.get_coverage_statistics(coverage)
+
+        if stats['total_vertices'] == 0:
+            result.add_info(
+                "coverage",
+                "Coverage validation skipped (no valid vertices found)"
+            )
+            return result
+
+        poorly_ratio = stats['poorly_covered'] / stats['total_vertices']
+        if poorly_ratio < 0.05 and stats['min'] >= 3:
+            rating = 'EXCELLENT'
+        elif poorly_ratio < 0.15 and stats['min'] >= 2:
+            rating = 'GOOD'
+        elif poorly_ratio < 0.30:
+            rating = 'FAIR'
+        else:
+            rating = 'POOR'
+
+        summary = (
+            f"Coverage rating: {rating}. "
+            f"Min {stats['min']} | Mean {stats['mean']:.1f} cameras per vertex"
+        )
+
+        if rating in ('POOR', 'FAIR'):
+            result.add_warning(
+                "coverage",
+                summary,
+                "Increase camera count or adjust the camera distribution"
+            )
+        else:
+            result.add_info("coverage", summary)
 
         return result
+
+    def _get_target_objects(self, context, settings):
+        """Get list of target objects for coverage analysis."""
+        if settings.target_collection:
+            collection = bpy.data.collections.get(settings.target_collection)
+            if collection:
+                return [obj for obj in collection.all_objects
+                        if obj.type == 'MESH']
+
+        return [obj for obj in context.selected_objects
+                if obj.type == 'MESH']
 
 
 def _get_preview_cameras():
