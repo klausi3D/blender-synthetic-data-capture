@@ -4,6 +4,41 @@ import os
 import sys
 import platform
 
+WINDOWS_MAX_PATH = 260
+
+
+def validate_path_length(path: str, max_len: int = WINDOWS_MAX_PATH) -> tuple:
+    """Validate a path length against Windows MAX_PATH.
+
+    Args:
+        path: Path to validate
+        max_len: Maximum length allowed on Windows
+
+    Returns:
+        tuple: (is_valid, normalized_path, error_message)
+    """
+    if not path:
+        return False, "", "Path is empty"
+
+    # Avoid Blender API calls so this remains safe in background threads.
+    normalized = os.path.expanduser(path)
+    normalized = os.path.normpath(normalized)
+    if len(normalized) > 1:
+        normalized = normalized.rstrip(os.sep)
+
+    if sys.platform != 'win32':
+        return True, normalized, ""
+
+    # Long path prefixes bypass MAX_PATH (if enabled in Windows policy)
+    if normalized.startswith("\\\\?\\") or normalized.startswith("//?/"):
+        return True, normalized, ""
+
+    length = len(normalized)
+    if length > max_len:
+        return False, normalized, f"Path length {length} exceeds Windows MAX_PATH {max_len}: {normalized}"
+
+    return True, normalized, ""
+
 
 def normalize_path(path: str) -> str:
     """Normalize a path for the current platform.

@@ -23,6 +23,7 @@ from .paths import (
     normalize_path,
     validate_directory,
     validate_file,
+    validate_path_length,
     get_conda_base,
     get_conda_python,
     get_conda_script,

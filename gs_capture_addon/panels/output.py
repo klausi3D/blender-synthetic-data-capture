@@ -77,6 +77,9 @@ class GSCAPTURE_PT_output_panel(Panel):
         if estimate['normals_mb'] > 0:
             row = box.row()
             row.label(text=f"Normals: {estimate['normals_mb']:.0f} MB")
+        if estimate.get('masks_mb', 0) > 0:
+            row = box.row()
+            row.label(text=f"Masks: {estimate['masks_mb']:.0f} MB")
         box.label(text=f"Total: {estimate['total_gb']:.2f} GB", icon='INFO')
         if estimate['warning']:
             box.label(text=estimate['warning'], icon='ERROR')

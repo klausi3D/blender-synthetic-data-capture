@@ -12,6 +12,31 @@ from bpy.props import StringProperty, EnumProperty
 from ..core.presets import PRESETS, apply_preset_to_settings, get_preset_enum_items
 
 
+def _preset_notes_to_lines(notes):
+    """Normalize preset notes into a list of displayable lines."""
+    if not notes:
+        return []
+
+    if isinstance(notes, str):
+        return [line for line in notes.split('\n') if line.strip()]
+
+    if isinstance(notes, (list, tuple)):
+        lines = []
+        for entry in notes:
+            if not entry:
+                continue
+            if isinstance(entry, str):
+                if '\n' in entry:
+                    lines.extend([line for line in entry.split('\n') if line.strip()])
+                elif entry.strip():
+                    lines.append(entry)
+            else:
+                lines.append(str(entry))
+        return lines
+
+    return [str(notes)]
+
+
 class GSCAPTURE_OT_ApplyPreset(Operator):
     """Apply the selected framework preset to capture settings.
 
@@ -117,13 +142,14 @@ class GSCAPTURE_OT_PresetInfo(Operator):
             col.label(text="✓ transforms.json (NeRF/Instant-NGP format)")
 
         # Notes
-        if preset.notes:
+        note_lines = _preset_notes_to_lines(preset.notes)
+        if note_lines:
             layout.separator()
             layout.label(text="Notes:", icon='INFO')
             box = layout.box()
             col = box.column(align=True)
             col.scale_y = 0.8
-            for line in preset.notes.split('\n'):
+            for line in note_lines:
                 col.label(text=line)
 
         # Website

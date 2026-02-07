@@ -6,6 +6,7 @@ https://github.com/graphdeco-inria/gaussian-splatting
 import os
 import re
 import shutil
+import sys
 from typing import Optional, List, Dict
 
 from .base import TrainingBackend, TrainingConfig, TrainingProgress, TrainingStatus
@@ -84,15 +85,22 @@ To install 3D Gaussian Splatting:
                 return env_path
 
         # Search common locations
-        search_paths = [
-            os.path.expanduser("~/gaussian-splatting"),
-            os.path.expanduser("~/repos/gaussian-splatting"),
-            os.path.expanduser("~/code/gaussian-splatting"),
-            "/opt/gaussian-splatting",
-            "C:/gaussian-splatting",
-            "D:/gaussian-splatting",
-            "C:/Projects/gaussian-splatting",
-        ]
+        if sys.platform == 'win32':
+            search_paths = [
+                os.path.expanduser("~/gaussian-splatting"),
+                os.path.expanduser("~/repos/gaussian-splatting"),
+                os.path.expanduser("~/code/gaussian-splatting"),
+                "C:/gaussian-splatting",
+                "D:/gaussian-splatting",
+                "C:/Projects/gaussian-splatting",
+            ]
+        else:
+            search_paths = [
+                os.path.expanduser("~/gaussian-splatting"),
+                os.path.expanduser("~/repos/gaussian-splatting"),
+                os.path.expanduser("~/code/gaussian-splatting"),
+                "/opt/gaussian-splatting",
+            ]
 
         for path in search_paths:
             normalized = normalize_path(path)

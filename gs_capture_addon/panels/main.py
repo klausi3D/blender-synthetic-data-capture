@@ -40,7 +40,7 @@ class GSCAPTURE_PT_main_panel(Panel):
         if settings.enable_checkpoints:
             from ..utils.checkpoint import load_checkpoint
             output_path = bpy.path.abspath(settings.output_path)
-            checkpoint = load_checkpoint(output_path)
+            checkpoint, _ = load_checkpoint(output_path)
             if checkpoint:
                 box = layout.box()
                 box.label(text="Checkpoint Found", icon='FILE_REFRESH')

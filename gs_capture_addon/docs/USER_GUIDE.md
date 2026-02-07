@@ -1,17 +1,19 @@
 # GS Capture - User Guide
 
-A professional Blender addon for generating training data for 3D Gaussian Splatting and NeRF models.
+GS Capture is a Blender addon for generating training data for 3D Gaussian Splatting and NeRF workflows. It produces camera-synchronized images and optional exports such as COLMAP files, depth maps, normals, and masks.
 
 ## Table of Contents
 
-1. [Installation](#installation)
-2. [Quick Start](#quick-start)
-3. [Framework Presets](#framework-presets)
-4. [Camera Configuration](#camera-configuration)
-5. [Capture Settings](#capture-settings)
-6. [Training Integration](#training-integration)
-7. [Export Formats](#export-formats)
-8. [Troubleshooting](#troubleshooting)
+1. Installation
+2. Quick Start
+3. Framework Presets
+4. Camera Configuration
+5. Capture Settings
+6. Checkpoints and Resume
+7. Training Integration
+8. Export Formats
+9. Troubleshooting
+10. Keyboard Shortcuts
 
 ---
 
@@ -19,114 +21,59 @@ A professional Blender addon for generating training data for 3D Gaussian Splatt
 
 ### Requirements
 
-- Blender 4.0 or newer
-- GPU with OpenGL 3.3+ support (for viewport preview)
-- For training: Python environment with training framework installed
+- Blender 4.0 or newer (4.x or 5.x)
+- GPU recommended for viewport preview and faster rendering
+- Optional: training backends installed if you want to run training from Blender
 
 ### Installing the Addon
 
-1. Download the `gs_capture_addon` folder
-2. In Blender: **Edit → Preferences → Add-ons**
-3. Click **Install...** and select the folder (or zip file)
-4. Enable "GS Capture - Gaussian Splatting Training Data Generator"
-5. Configure backend paths in Preferences (optional, for training)
+1. In Blender: Edit -> Preferences -> Add-ons
+2. Click Install... and select `gs_capture_addon.zip` (or your packaged addon zip)
+3. Enable "GS Capture - Gaussian Splatting Training Data Generator"
+4. Optional: configure training backends in the add-on preferences
 
-### Configuring Training Backends (Optional)
+### Training Backend Preferences (Optional)
 
-To use integrated training, configure paths in addon preferences:
+Open Edit -> Preferences -> Add-ons -> GS Capture.
 
-1. **Edit → Preferences → Add-ons → GS Capture**
-2. Set paths for installed backends:
-   - **3D Gaussian Splatting**: Path to repository containing `train.py`
-   - **Nerfstudio**: Name of conda environment
-   - **gsplat**: Path to examples directory
+- 3D Gaussian Splatting
+  - Path to repo containing `train.py`
+  - Conda environment name (default: `gaussian_splatting`)
+- Nerfstudio
+  - Conda environment name (default: `nerfstudio`)
+- GS-Lightning
+  - Path to repo containing `main.py`
+  - Conda environment name (default: `gs_lightning`)
+- gsplat
+  - Path to `gsplat/examples` (must contain `simple_trainer.py`)
+  - Conda environment name (default: `gsplat`)
 
 ---
 
 ## Quick Start
 
-### Basic Workflow
-
-1. **Select your object(s)** in the 3D viewport
-2. **Open the GS Capture panel** in the sidebar (N-key → GS Capture)
-3. **Choose a framework preset** matching your target training framework
-4. **Click "Apply Preset"** to configure optimal settings
-5. **Set the output path** for captured images
-6. **Click "Preview Cameras"** to visualize camera positions
-7. **Click "Capture Selected"** to start rendering
-
-### Recommended Settings by Use Case
-
-| Use Case | Camera Count | Resolution | Format |
-|----------|--------------|------------|--------|
-| Quick test | 30-50 | 800x800 | PNG |
-| Standard quality | 100-150 | 1280x1280 | PNG |
-| High quality | 200-300 | 1920x1920 | PNG |
-| Production | 300+ | 2048x2048 | PNG |
+1. Select one or more mesh objects in the 3D Viewport
+2. Open the GS Capture panel (N key -> GS Capture)
+3. Optional: choose a Framework Preset and apply it
+4. Set the Output Path
+5. Optional: click Preview to visualize camera positions
+6. Click Capture Selected
 
 ---
 
 ## Framework Presets
 
-Framework presets configure capture settings optimized for specific training frameworks.
+Presets set recommended camera counts, Blender render resolution/format, and export options. You can tweak any settings after applying a preset.
 
-### Available Presets
-
-#### 3D Gaussian Splatting (INRIA)
-- **Cameras**: 100-300
-- **Resolution**: 1920x1080
-- **Format**: PNG with transparent background
-- **Export**: COLMAP format
-- Best for: Original 3DGS implementation
-
-#### Instant-NGP
-- **Cameras**: 50-200
-- **Resolution**: 1920x1080
-- **Format**: PNG
-- **Export**: transforms.json
-- Best for: Fast training with NVIDIA hardware
-
-#### Nerfstudio
-- **Cameras**: 100-200
-- **Resolution**: 1280x720
-- **Format**: PNG
-- **Export**: transforms.json
-- Best for: splatfacto and other Nerfstudio methods
-
-#### Postshot
-- **Cameras**: 50-150
-- **Resolution**: 1920x1080
-- **Format**: JPEG (quality 95)
-- **Export**: COLMAP format
-- Best for: Postshot's optimized pipeline
-
-#### Polycam
-- **Cameras**: 30-100
-- **Resolution**: 1920x1080
-- **Format**: JPEG
-- **Export**: Both COLMAP and transforms.json
-- Best for: Polycam-compatible exports
-
-#### Luma AI
-- **Cameras**: 100-300
-- **Resolution**: 1920x1080
-- **Format**: PNG
-- **Export**: transforms.json
-- Best for: Luma AI's API
-
-#### gsplat
-- **Cameras**: 100-300
-- **Resolution**: 1920x1080
-- **Format**: PNG
-- **Export**: Both formats
-- Best for: Nerfstudio's gsplat library
-
-### Applying a Preset
-
-1. Select the preset from the dropdown in the **Framework Preset** panel
-2. Click the checkmark button to apply settings
-3. Review the "Current Settings" subpanel to verify configuration
-4. Adjust individual settings as needed
+| Preset | Cameras | Resolution | Format | Exports |
+|---|---|---|---|---|
+| 3D Gaussian Splatting | 100-300 | 1920x1080 | PNG | COLMAP |
+| Instant-NGP | 100-200 | 800x800 | PNG | transforms.json |
+| Nerfstudio (splatfacto) | 150-300 | 1920x1080 | PNG | transforms.json |
+| Postshot | 50-150 | 1920x1080 | JPEG 95 | COLMAP + transforms.json |
+| Polycam | 100-200 | 1080x1080 | JPEG 90 | COLMAP |
+| Luma AI | 100-200 | 1920x1080 | PNG | COLMAP |
+| gsplat | 100-300 | 1920x1080 | PNG | COLMAP + transforms.json |
 
 ---
 
@@ -134,81 +81,60 @@ Framework presets configure capture settings optimized for specific training fra
 
 ### Distribution Patterns
 
-#### Fibonacci Sphere
-Evenly distributed cameras on a sphere using the Fibonacci spiral pattern.
-Best for: Most general use cases, uniform coverage.
+- Fibonacci Sphere: uniform sphere distribution
+- Top Hemisphere: cameras only above the object
+- Bottom Hemisphere: cameras only below the object
+- Single Ring: one horizontal ring
+- Multi Ring: multiple horizontal rings (use Ring Count)
 
-#### Top Hemisphere
-Cameras positioned only above the object.
-Best for: Objects meant to be viewed from above (e.g., tabletop items).
+### Key Parameters
 
-#### Bottom Hemisphere
-Cameras positioned only below the object.
-Best for: Objects viewed from below (e.g., ceiling fixtures).
-
-#### Single Ring
-Cameras in a horizontal ring around the object.
-Best for: Quick 360° capture, turntable-style views.
-
-#### Multi Ring
-Multiple horizontal rings at different elevations.
-Best for: Balanced coverage with controlled vertical distribution.
-
-### Camera Parameters
-
-- **Camera Count**: Total number of cameras to generate
-- **Min/Max Elevation**: Vertical angle limits (degrees)
-- **Distance Mode**: Auto (based on object size) or Manual
-- **Distance Multiplier**: Scale factor for auto-calculated distance
-- **Focal Length**: Camera focal length in mm (default: 50mm)
-
-### Previewing Cameras
-
-1. Click **"Preview Cameras"** to generate camera positions
-2. Camera frustrums appear in the viewport as blue wireframes
-3. Adjust settings and preview again as needed
-4. Click **"Clear Preview"** to remove preview cameras
+- Camera Count: total cameras to generate
+- Min/Max Elevation: vertical angle limits in degrees
+- Distance Mode: Auto or Manual
+- Distance Multiplier: scales auto distance
+- Camera Distance: manual distance
+- Focal Length: in mm
 
 ---
 
 ## Capture Settings
 
-### Render Settings
+### Render Speed Preset
 
-Render settings are controlled through Blender's native Render Properties panel:
-- **Render Engine**: Cycles or EEVEE
-- **Resolution**: Set in Output Properties
-- **Samples**: Set in Render Properties
+- Custom: use Blender render settings
+- Fast (Eevee): low samples for speed
+- Balanced (Eevee): higher samples
+- Quality (Cycles): Cycles with 128 samples
 
-### GS-Specific Settings
+Resolution, samples, engine, and file format are still controlled in Blender's Render Properties. The speed preset can override engine and samples for convenience.
 
-#### Output Options
-- **Export COLMAP**: Generate COLMAP-compatible files
-- **Export transforms.json**: Generate NeRF-format camera data
-- **Export Depth Maps**: Save normalized depth for each view
-- **Export Normal Maps**: Save world-space normals
-- **Export Object Masks**: Save binary masks for target objects
+### Export Options
 
-#### Lighting Modes
-- **White Background**: Pure white environment (recommended)
-- **Gray Background**: Neutral gray environment
-- **HDR Environment**: Custom HDR image for lighting
-- **Keep Scene Lighting**: Preserve existing scene lights
+- Export COLMAP Format: creates `sparse/0/` files
+- Export transforms.json: NeRF-style camera export
+- Export Depth Maps: `depth/depth_0000.png` (16-bit)
+- Export Normal Maps: `normals/normal_0000.exr`
+- Export Object Masks: `masks/` directory
 
-#### Material Overrides
-- **Original Materials**: Use object's materials
-- **Neutral Diffuse**: Gray diffuse for geometry capture
-- **Vertex Colors**: Display vertex color data
-- **Matcap**: Matcap-style shading
+### Masks
 
-### Checkpoint/Resume
+- Mask Source
+  - Alpha Channel: uses the rendered alpha channel
+  - Object Index: uses Blender's Object Index pass
+- Mask Format
+  - Standard: `mask_0000.png`
+  - GS-Lightning: `image_0000.png.png`
 
-For long capture sessions:
+Alpha-based masks require Transparent Background enabled and a format that supports alpha (PNG or EXR).
 
-1. Enable **"Enable Checkpoints"** in settings
-2. Set **"Checkpoint Interval"** (default: every 10 images)
-3. If interrupted, the addon will prompt to resume from last checkpoint
-4. Enable **"Auto Resume"** to automatically continue
+---
+
+## Checkpoints and Resume
+
+- Enable Checkpoints to save progress every N images
+- Auto Resume will automatically continue from the last checkpoint if settings match
+- If settings change or output folders are missing, the capture starts fresh
 
 ---
 
@@ -216,171 +142,91 @@ For long capture sessions:
 
 ### Supported Backends
 
-#### 3D Gaussian Splatting
-Original implementation from INRIA/Graphdeco.
+- 3D Gaussian Splatting (original)
+  - Requires COLMAP export (`sparse/0/`)
+- Nerfstudio (splatfacto)
+  - Requires `transforms.json`
+- GS-Lightning
+  - Requires COLMAP export
+  - For mask support: enable Export Object Masks and set Mask Format to GS-Lightning
+- gsplat
+  - Accepts `transforms.json` or COLMAP
+  - Requires `gsplat/examples` path and a conda environment with gsplat installed
 
-**Requirements:**
-```bash
-git clone https://github.com/graphdeco-inria/gaussian-splatting.git
-cd gaussian-splatting
-pip install -r requirements.txt
-pip install submodules/diff-gaussian-rasterization
-pip install submodules/simple-knn
-```
+### Start Training
 
-#### Nerfstudio
-Nerfstudio framework with splatfacto.
-
-**Requirements:**
-```bash
-pip install nerfstudio
-```
-
-#### gsplat
-Optimized Gaussian Splatting library.
-
-**Requirements:**
-```bash
-pip install gsplat
-git clone https://github.com/nerfstudio-project/gsplat.git
-```
-
-### Starting Training
-
-1. Complete a capture with valid data
-2. Open the **Training** panel
-3. Select your training backend
-4. Set the training data path (your capture output)
-5. Set the training output path
-6. Configure iterations and other parameters
-7. Click **"Start Training"**
-
-### Monitoring Progress
-
-During training:
-- Progress bar shows current iteration
-- Loss and PSNR metrics update in real-time
-- ETA estimates remaining time
-- Log panel shows raw output
-
-### Stopping Training
-
-Click **"Stop Training"** to terminate the process.
-Partial results are preserved in the output directory.
+1. Open the Training panel in the sidebar
+2. Select a backend
+3. Set Training Data Path (usually the capture output folder)
+4. Set Training Output Path
+5. Set iterations and optional extra arguments
+6. Click Start Training
 
 ---
 
 ## Export Formats
 
-### COLMAP Format
+### COLMAP
 
-Directory structure:
 ```
 output/
-├── images/
-│   ├── 00000.png
-│   ├── 00001.png
-│   └── ...
-└── sparse/
-    └── 0/
-        ├── cameras.txt
-        ├── images.txt
-        └── points3D.txt
+  images/
+    image_0000.png
+    image_0001.png
+  sparse/
+    0/
+      cameras.txt
+      images.txt
+      points3D.txt
 ```
 
-### transforms.json Format
+### transforms.json
+
+Example frame entry:
 
 ```json
 {
-  "camera_angle_x": 0.7853,
-  "frames": [
-    {
-      "file_path": "images/00000.png",
-      "transform_matrix": [[...], [...], [...], [...]],
-      "depth_path": "depth/00000.png",
-      "mask_path": "masks/00000.png"
-    }
-  ]
+  "file_path": "./images/image_0000.png",
+  "transform_matrix": [[...], [...], [...], [...]],
+  "depth_file_path": "./depth/depth_0000.png",
+  "mask_file_path": "./masks/mask_0000.png"
 }
 ```
 
+Depth and mask entries are only included when those exports are enabled.
+
 ### Optional Exports
 
-#### Depth Maps
-- Normalized 16-bit PNG or EXR
-- Values: 0 = near, 1 = far
-- Path: `depth/00000.png`
-
-#### Normal Maps
-- World-space normals as RGB
-- Path: `normals/00000.png`
-
-#### Object Masks
-- Binary masks (white = object)
-- Path: `masks/00000.png`
+- Depth: `depth/depth_0000.png` (16-bit normalized)
+- Normals: `normals/normal_0000.exr` (world-space)
+- Masks: `masks/mask_0000.png` or `masks/image_0000.png.png` (GS-Lightning)
 
 ---
 
 ## Troubleshooting
 
-### Common Issues
+- No objects to capture
+  - Select at least one mesh object
 
-#### "No objects to capture"
-- Ensure objects are selected before clicking capture
-- Check that objects are mesh type (not empties, lights, etc.)
+- Missing `sparse/0/`
+  - Enable Export COLMAP Format and re-capture
 
-#### "Missing sparse/0 directory"
-- Enable COLMAP export in settings
-- Ensure capture completed successfully
+- Training backend not installed
+  - Check the add-on preferences for correct paths and conda environments
 
-#### Training won't start
-- Verify backend path in addon preferences
-- Check that required Python packages are installed
-- Ensure CUDA is available for GPU training
+- Mask export from alpha fails
+  - Enable Transparent Background and use PNG or EXR
+  - For object-index masks, assign pass indices and use Object Index source
 
-#### Black renders
-- Check lighting mode (try "White Background")
-- Verify render engine is compatible with scene
-- Check object visibility settings
-
-#### Slow rendering
-- Reduce sample count for faster preview
-- Use EEVEE for quick tests
-- Lower resolution for initial tests
-
-### Getting Help
-
-1. Check the console for error messages (Window → Toggle System Console)
-2. Review the IMPLEMENTATION_PLAN.md for feature status
-3. Submit issues at the project repository
+- Path too long on Windows
+  - Use a shorter output path (e.g., `C:\gs_capture`) and avoid deep folder trees
 
 ---
 
 ## Keyboard Shortcuts
 
 | Shortcut | Action |
-|----------|--------|
-| N | Toggle sidebar (to access GS Capture panel) |
+|---|---|
+| N | Toggle sidebar (GS Capture panel) |
+| Esc | Cancel capture |
 | Ctrl+Z | Undo last action |
-| Esc | Cancel running operation |
-
----
-
-## Version History
-
-### v2.1.0 (Current)
-- Added framework presets
-- Integrated training support
-- Added validation system
-- Viewport camera preview
-- Coverage analysis
-
-### v2.0.0
-- Complete modular rewrite
-- Depth, normal, and mask export
-- Checkpoint/resume system
-- Batch processing
-
-### v1.0.0
-- Initial release
-- Basic capture functionality

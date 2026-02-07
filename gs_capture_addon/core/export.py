@@ -13,6 +13,26 @@ import zlib
 import numpy as np
 from mathutils import Vector, Matrix
 
+from ..utils.paths import validate_path_length
+
+
+def _ensure_file_written(filepath, description="file"):
+    """Verify a file exists and is non-empty after writing."""
+    try:
+        if not os.path.exists(filepath):
+            raise IOError(f"{description} was not written: {filepath}")
+        if os.path.getsize(filepath) <= 0:
+            raise IOError(f"{description} is empty: {filepath}")
+    except OSError as e:
+        raise IOError(f"Failed to verify {description} '{filepath}': {e}") from e
+
+
+def _ensure_path_length(filepath, description="file"):
+    """Validate path length before writing on Windows."""
+    is_valid, _, error = validate_path_length(filepath)
+    if not is_valid:
+        raise IOError(f"{description} path is too long for Windows. {error}")
+
 
 def get_image_extension(file_format: str) -> str:
     """Get file extension for a Blender image format.
@@ -112,46 +132,67 @@ def export_colmap_cameras(cameras, output_path, image_width, image_height, image
         image_width: Image width in pixels
         image_height: Image height in pixels
         image_ext: Image file extension (without dot)
+
+    Returns:
+        tuple: (success: bool, warning_message: str or None)
     """
+    if not cameras:
+        return False, "COLMAP export skipped: no cameras available."
+
+    _ensure_path_length(output_path, "COLMAP output directory")
     os.makedirs(output_path, exist_ok=True)
 
     # cameras.txt - camera intrinsics
     cameras_file = os.path.join(output_path, "cameras.txt")
-    with open(cameras_file, 'w') as f:
-        f.write("# Camera list with one line of data per camera:\n")
-        f.write("#   CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]\n")
-        f.write(f"# Number of cameras: 1\n")
+    try:
+        _ensure_path_length(cameras_file, "COLMAP cameras file")
+        with open(cameras_file, 'w') as f:
+            f.write("# Camera list with one line of data per camera:\n")
+            f.write("#   CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]\n")
+            f.write(f"# Number of cameras: 1\n")
 
-        # Get intrinsics from first camera (assumes all same)
-        intrinsics = get_camera_intrinsics(cameras[0], image_width, image_height)
+            # Get intrinsics from first camera (assumes all same)
+            intrinsics = get_camera_intrinsics(cameras[0], image_width, image_height)
 
-        # PINHOLE model: fx, fy, cx, cy
-        f.write(f"1 PINHOLE {image_width} {image_height} "
-                f"{intrinsics['fx']:.6f} {intrinsics['fy']:.6f} "
-                f"{intrinsics['cx']:.6f} {intrinsics['cy']:.6f}\n")
+            # PINHOLE model: fx, fy, cx, cy
+            f.write(f"1 PINHOLE {image_width} {image_height} "
+                    f"{intrinsics['fx']:.6f} {intrinsics['fy']:.6f} "
+                    f"{intrinsics['cx']:.6f} {intrinsics['cy']:.6f}\n")
+        _ensure_file_written(cameras_file, "COLMAP cameras file")
+    except Exception as e:
+        raise IOError(f"Error writing COLMAP cameras file '{cameras_file}': {e}") from e
 
     # images.txt - camera extrinsics
     # Note: LichtFeld Studio requires even number of non-comment lines
     # Each image needs: pose line + points line
     images_file = os.path.join(output_path, "images.txt")
-    with open(images_file, 'w') as f:
-        f.write("# Image list with two lines of data per image:\n")
-        f.write("#   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME\n")
-        f.write("#   POINTS2D[] as (X, Y, POINT3D_ID)\n")
+    try:
+        _ensure_path_length(images_file, "COLMAP images file")
+        with open(images_file, 'w') as f:
+            f.write("# Image list with two lines of data per image:\n")
+            f.write("#   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME\n")
+            f.write("#   POINTS2D[] as (X, Y, POINT3D_ID)\n")
 
-    for i, cam in enumerate(cameras):
-        rot, trans = blender_to_colmap_matrix(cam.matrix_world)
+            for i, cam in enumerate(cameras):
+                rot, trans = blender_to_colmap_matrix(cam.matrix_world)
 
-        image_name = f"image_{i:04d}.{image_ext}"
+                image_name = f"image_{i:04d}.{image_ext}"
 
-            f.write(f"{i + 1} {rot.w:.6f} {rot.x:.6f} {rot.y:.6f} {rot.z:.6f} ")
-            f.write(f"{trans.x:.6f} {trans.y:.6f} {trans.z:.6f} 1 {image_name}\n")
-            # Use single space for points line - prevents removal as "empty"
-            f.write(" \n")
+                f.write(f"{i + 1} {rot.w:.6f} {rot.x:.6f} {rot.y:.6f} {rot.z:.6f} ")
+                f.write(f"{trans.x:.6f} {trans.y:.6f} {trans.z:.6f} 1 {image_name}\n")
+                # Use single space for points line - prevents removal as "empty"
+                f.write(" \n")
+        _ensure_file_written(images_file, "COLMAP images file")
+    except Exception as e:
+        raise IOError(f"Error writing COLMAP images file '{images_file}': {e}") from e
 
     # points3D.txt - generate initial points
     points_file = os.path.join(output_path, "points3D.txt")
-    generate_initial_points(cameras, points_file)
+    _ensure_path_length(points_file, "COLMAP points file")
+    _, points_warning = generate_initial_points(cameras, points_file)
+    if points_warning:
+        return True, points_warning
+    return True, None
 
 
 def generate_initial_points(cameras, output_file, num_points=5000):
@@ -164,7 +205,15 @@ def generate_initial_points(cameras, output_file, num_points=5000):
         cameras: List of Blender camera objects
         output_file: Path to output points3D.txt
         num_points: Number of points to generate
+
+    Returns:
+        tuple: (success: bool, warning_message: str or None)
     """
+    if not cameras:
+        return False, "COLMAP points export skipped: no cameras available."
+
+    _ensure_path_length(output_file, "COLMAP points file")
+
     # Use local random instance to avoid polluting global random state
     rng = random.Random(42)  # Reproducible
 
@@ -224,12 +273,18 @@ def generate_initial_points(cameras, output_file, num_points=5000):
         points.append((px, py, pz, r, g, b))
 
     # Write points3D.txt
-    with open(output_file, 'w') as f:
-        f.write("# 3D point list with one line of data per point:\n")
-        f.write("#   POINT3D_ID, X, Y, Z, R, G, B, ERROR, TRACK[] as (IMAGE_ID, POINT2D_IDX)\n")
+    try:
+        with open(output_file, 'w') as f:
+            f.write("# 3D point list with one line of data per point:\n")
+            f.write("#   POINT3D_ID, X, Y, Z, R, G, B, ERROR, TRACK[] as (IMAGE_ID, POINT2D_IDX)\n")
 
-        for i, (px, py, pz, r, g, b) in enumerate(points):
-            f.write(f"{i + 1} {px:.6f} {py:.6f} {pz:.6f} {r} {g} {b} 0.0\n")
+            for i, (px, py, pz, r, g, b) in enumerate(points):
+                f.write(f"{i + 1} {px:.6f} {py:.6f} {pz:.6f} {r} {g} {b} 0.0\n")
+        _ensure_file_written(output_file, "COLMAP points file")
+    except Exception as e:
+        raise IOError(f"Error writing COLMAP points file '{output_file}': {e}") from e
+
+    return True, None
 
 
 def export_transforms_json(cameras, output_path, image_width, image_height,
@@ -315,8 +370,13 @@ def export_transforms_json(cameras, output_path, image_width, image_height,
 
     # Write JSON
     json_path = os.path.join(output_path, "transforms.json")
-    with open(json_path, 'w') as f:
-        json.dump(output, f, indent=2)
+    try:
+        _ensure_path_length(json_path, "transforms.json")
+        with open(json_path, 'w') as f:
+            json.dump(output, f, indent=2)
+        _ensure_file_written(json_path, "transforms.json")
+    except Exception as e:
+        raise IOError(f"Error writing transforms file '{json_path}': {e}") from e
 
 
 def save_depth_map(render_result, output_path, normalize=True, format='PNG'):
@@ -330,6 +390,7 @@ def save_depth_map(render_result, output_path, normalize=True, format='PNG'):
         normalize: Whether to normalize depth to 0-1 range
         format: Output format ('PNG', 'EXR')
     """
+    _ensure_path_length(output_path, "depth map")
     # Get the Z pass
     try:
         # Access via compositor
@@ -360,10 +421,10 @@ def save_depth_map(render_result, output_path, normalize=True, format='PNG'):
             depth_img.file_format = format
             depth_img.save()
             bpy.data.images.remove(depth_img)
+            _ensure_file_written(output_path, "depth map")
             return True
     except Exception as e:
-        print(f"Error saving depth map: {e}")
-        return False
+        raise RuntimeError(f"Error saving depth map '{output_path}': {e}") from e
 
 
 def save_depth_from_z_buffer(context, output_path, camera, near_clip=0.1, far_clip=100.0):
@@ -381,6 +442,7 @@ def save_depth_from_z_buffer(context, output_path, camera, near_clip=0.1, far_cl
     Returns:
         bool: Success status
     """
+    _ensure_path_length(output_path, "depth map")
     scene = context.scene
 
     # Enable compositor and Z pass
@@ -435,6 +497,7 @@ def save_normal_map(context, output_path):
     Returns:
         bool: Success status
     """
+    _ensure_path_length(output_path, "normal map")
     scene = context.scene
 
     # Enable normal pass
@@ -482,6 +545,7 @@ def save_object_mask(context, output_path, target_objects):
     Returns:
         bool: Success status
     """
+    _ensure_path_length(output_path, "mask image")
     scene = context.scene
 
     if not target_objects:
@@ -577,6 +641,7 @@ def _write_grayscale_png(filepath, data):
     Returns:
         bool: Success status
     """
+    _ensure_path_length(filepath, "grayscale PNG")
     height, width = data.shape
 
     def make_chunk(chunk_type, chunk_data):
@@ -607,8 +672,12 @@ def _write_grayscale_png(filepath, data):
     iend = make_chunk(b'IEND', b'')
 
     # Write PNG file
-    with open(filepath, 'wb') as f:
-        f.write(signature + ihdr + idat + iend)
+    try:
+        with open(filepath, 'wb') as f:
+            f.write(signature + ihdr + idat + iend)
+        _ensure_file_written(filepath, "grayscale PNG")
+    except Exception as e:
+        raise IOError(f"Error writing grayscale PNG '{filepath}': {e}") from e
 
     return True
 
@@ -625,13 +694,18 @@ def _convert_to_grayscale(filepath):
     Returns:
         bool: Success status
     """
+    _ensure_path_length(filepath, "grayscale mask")
     # Try PIL first (cleanest solution)
     try:
         from PIL import Image
-        img = Image.open(filepath)
-        gray = img.convert('L')
-        gray.save(filepath)
-        return True
+        try:
+            img = Image.open(filepath)
+            gray = img.convert('L')
+            gray.save(filepath)
+            _ensure_file_written(filepath, "grayscale mask")
+            return True
+        except Exception as e:
+            raise RuntimeError(f"Failed to convert mask to grayscale using PIL: {e}") from e
     except ImportError:
         pass  # PIL not available, use fallback
 
@@ -656,11 +730,12 @@ def _convert_to_grayscale(filepath):
         bpy.data.images.remove(img)
 
         # Write grayscale PNG
-        return _write_grayscale_png(filepath, gray_data)
+        _write_grayscale_png(filepath, gray_data)
+        _ensure_file_written(filepath, "grayscale mask")
+        return True
 
     except Exception as e:
-        print(f"Error converting to grayscale: {e}")
-        return False
+        raise RuntimeError(f"Error converting to grayscale '{filepath}': {e}") from e
 
 
 def extract_alpha_mask(image_path, mask_path):
@@ -675,8 +750,9 @@ def extract_alpha_mask(image_path, mask_path):
         mask_path: Path to save binary mask
 
     Returns:
-        bool: Success status
+        tuple: (success: bool, error_message: str or None)
     """
+    _ensure_path_length(mask_path, "mask image")
     try:
         # Load the rendered image
         img = bpy.data.images.load(image_path)
@@ -685,9 +761,8 @@ def extract_alpha_mask(image_path, mask_path):
         # Check size instead - if both dimensions are 0, there's truly no data
         width, height = img.size
         if width == 0 or height == 0:
-            print(f"Warning: Image {image_path} has no valid dimensions")
             bpy.data.images.remove(img)
-            return False
+            return False, f"Image {image_path} has no valid dimensions"
         pixels = np.array(img.pixels[:]).reshape(height, width, 4)
 
         # Extract alpha channel and convert to binary mask (0.0 or 1.0)
@@ -714,6 +789,7 @@ def extract_alpha_mask(image_path, mask_path):
         mask_img.filepath_raw = mask_path
         mask_img.file_format = 'PNG'
         mask_img.save()
+        _ensure_file_written(mask_path, "mask image")
 
         # Cleanup Blender image
         bpy.data.images.remove(mask_img)
@@ -722,12 +798,12 @@ def extract_alpha_mask(image_path, mask_path):
         # Convert to true grayscale using subprocess (cv2/PIL might not be in Blender)
         # This ensures single-channel output for GS-Lightning
         _convert_to_grayscale(mask_path)
+        _ensure_file_written(mask_path, "mask image")
 
-        return True
+        return True, None
 
     except Exception as e:
-        print(f"Error extracting alpha mask: {e}")
-        return False
+        raise RuntimeError(f"Error extracting alpha mask: {e}") from e
 
 
 def save_alpha_mask_from_render(mask_path):
@@ -741,6 +817,7 @@ def save_alpha_mask_from_render(mask_path):
     Returns:
         bool: Success status
     """
+    _ensure_path_length(mask_path, "mask image")
     try:
         render_result = bpy.data.images.get('Render Result')
         if not render_result or not render_result.has_data:
@@ -770,10 +847,10 @@ def save_alpha_mask_from_render(mask_path):
         mask_img.filepath_raw = mask_path
         mask_img.file_format = 'PNG'
         mask_img.save()
+        _ensure_file_written(mask_path, "mask image")
 
         bpy.data.images.remove(mask_img)
         return True
 
     except Exception as e:
-        print(f"Error saving alpha mask: {e}")
-        return False
+        raise RuntimeError(f"Error saving alpha mask '{mask_path}': {e}") from e

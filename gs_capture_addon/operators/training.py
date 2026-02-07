@@ -108,6 +108,7 @@ class GSCAPTURE_OT_StartTraining(Operator):
         )
 
         # Start training
+        self._redraw_pending = False
         self._process = start_training(
             backend=backend,
             config=config,
@@ -168,9 +169,10 @@ class GSCAPTURE_OT_StartTraining(Operator):
 
     def _on_progress(self, progress):
         """Handle progress updates from training."""
-        # This is called from the training thread
-        # We just need to trigger a redraw
-        pass
+        # This is called from the training thread; do not call Blender API here.
+        # We only mark that a redraw is desired and let the modal timer handle UI updates.
+        self._latest_progress = progress
+        self._redraw_pending = True
 
     def _preflight_check(self, context):
         """Perform pre-flight validation before starting training.

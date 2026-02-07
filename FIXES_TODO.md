@@ -36,11 +36,10 @@ Generated: 2024-12-26
   - Problem: `save_render()` can fail silently (disk full, permission denied)
   - Fix: Wrap in try-except, verify file exists after save
 
-- [ ] **2.2 No disk full handling in export**
+- [x] **2.2 No disk full handling in export** ✅ FIXED
   - File: `core/export.py` lines 95, 112, 201, 281
   - Problem: File writes have no error handling
-  - Fix: Try-except around all file operations, report errors to user
-  - **Note:** File keeps getting modified externally - needs manual fix
+  - Fix: Try-except around all file operations, verify output files, report errors to user
 
 ### 3. Validation Gaps - Potential Crashes
 
@@ -54,10 +53,10 @@ Generated: 2024-12-26
   - Problem: Assumes color_attributes exists
   - Note: Already had proper validation in place
 
-- [ ] **3.3 ViewLayer "ViewLayer" assumed to exist**
+- [x] **3.3 ViewLayer "ViewLayer" assumed to exist** ✅ FIXED
   - File: `operators/capture.py` line 116
   - Problem: Hardcoded name may not exist
-  - Fix: Use `scene.view_layers[0]` or check existence
+  - Fix: Use `context.view_layer` or check existence
 
 - [x] **3.4 object_groups index without bounds check** ✅ FIXED
   - File: `operators/batch.py` lines 141, 165
@@ -76,22 +75,22 @@ Generated: 2024-12-26
   - Fix: Use adjacency map for O(V * avg_neighbors)
   - Impact: 10-50x faster on high-poly meshes
 
-- [ ] **4.2 O(n^2) clustering in coverage suggestions**
+- [x] **4.2 O(n^2) clustering in coverage suggestions** ✅ FIXED
   - File: `utils/coverage.py` lines 261-301
   - Problem: Compares every position to every other position
-  - Fix: Use KD-tree or spatial hash for O(N log N)
+  - Fix: Use spatial hash grid lookup for near-neighbor clustering
 
-- [ ] **4.3 Vertex coverage calculation is expensive**
+- [x] **4.3 Vertex coverage calculation is expensive** ✅ FIXED
   - File: `utils/coverage.py` lines 49-68
   - Problem: O(Vertices * Cameras) with BVH raycast per check
-  - Fix: Frustum cull cameras first, cache BVH, batch queries
+  - Fix: Precompute camera data and frustum-cull cameras per object using bounds
 
 ### 5. Blocking I/O on Main Thread
 
-- [ ] **5.1 Checkpoint writes block render loop**
+- [x] **5.1 Checkpoint writes block render loop** ✅ FIXED
   - File: `operators/capture.py` line 432
   - Problem: JSON write happens on main thread every N frames
-  - Fix: Move to background thread or increase interval
+  - Fix: Background checkpoint writer snapshots data and writes off the render loop
 
 - [x] **5.2 JSON formatted with indent=2** ✅ FIXED
   - File: `utils/checkpoint.py` line 45
@@ -100,17 +99,17 @@ Generated: 2024-12-26
 
 ### 6. Redundant Computations
 
-- [ ] **6.1 Two separate loops over objects in analysis**
+- [x] **6.1 Two separate loops over objects in analysis** ✅ FIXED
   - File: `core/analysis.py` lines 312-399
   - Problem: First loop for mesh analysis, second for texture analysis
-  - Fix: Combine into single pass over objects
+  - Fix: Combine mesh + texture aggregation in a single object pass
 
-- [ ] **6.2 Format dict recreated every frame**
+- [x] **6.2 Format dict recreated every frame** ✅ FIXED
   - File: `operators/capture.py` lines 400-414
   - Problem: `format_to_ext` dict and path formatting done per render
-  - Fix: Cache extension and base path in `execute()`
+  - Fix: Cache extension and output path prefixes in `execute()`
 
-- [ ] **6.3 Surface area uses matrix multiply per triangle vertex**
+- [x] **6.3 Surface area uses matrix multiply per triangle vertex** ✅ FIXED
   - File: `core/analysis.py` lines 62-93
   - Problem: Expensive matrix operations in loop
   - Fix: Transform all vertices once, then calculate areas
@@ -121,39 +120,39 @@ Generated: 2024-12-26
 
 ### 7. Error Reporting Inconsistency
 
-- [ ] **7.1 Uses print() instead of self.report()**
+- [x] **7.1 Uses print() instead of self.report()** ✅ FIXED
   - Files: `utils/checkpoint.py`, `utils/lighting.py`, `core/export.py`
   - Problem: Errors printed to console, users don't see them
-  - Fix: Return error status, let calling operator report to user
+  - Fix: Return error status, surface warnings/errors via operators
 
 ### 8. Windows Compatibility
 
-- [ ] **8.1 Path length > 260 chars not validated**
+- [x] **8.1 Path length > 260 chars not validated** ✅ FIXED
   - Files: Multiple (capture.py, export.py, checkpoint.py)
   - Problem: Windows MAX_PATH limit causes silent failures
-  - Fix: Check path length before writing, warn user
+  - Fix: Validate path lengths before writes; warn/disable checkpoints when needed
 
-- [ ] **8.2 Unix-style paths in search list**
-  - File: `utils/lighting.py` lines 68-74
+- [x] **8.2 Unix-style paths in search list** ✅ FIXED
+  - Files: `core/training/gaussian_splatting.py`, `core/training/gs_lightning.py`
   - Problem: `/opt/gaussian-splatting` doesn't exist on Windows
-  - Fix: Use platform-specific search paths
+  - Fix: Use platform-specific search paths for 3DGS/GS-Lightning installs
 
 ### 9. Resume Edge Cases
 
-- [ ] **9.1 Camera count mismatch not handled**
+- [x] **9.1 Camera count mismatch not handled** ✅ FIXED
   - File: `operators/capture.py` lines 320-326
   - Problem: If camera count changed, old indices may be invalid
-  - Fix: Compare checkpoint total_cameras with current count
+  - Fix: Reconcile checkpoint totals and trim out-of-range indices
 
-- [ ] **9.2 Settings hash doesn't cover all critical settings**
+- [x] **9.2 Settings hash doesn't cover all critical settings** ✅ FIXED
   - File: `utils/checkpoint.py` lines 183-213
   - Problem: Render engine, format, transparency not in hash
-  - Fix: Include all settings that affect output
+  - Fix: Include render settings, outputs, and capture config in hash (with legacy support)
 
-- [ ] **9.3 Deleted output folder not detected on resume**
+- [x] **9.3 Deleted output folder not detected on resume** ✅ FIXED
   - File: `operators/capture.py`
   - Problem: Checkpoint exists but output folder was deleted
-  - Fix: Verify directory structure before resuming
+  - Fix: Verify output folders before resuming; restart if missing
 
 ---
 

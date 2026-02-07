@@ -6,6 +6,8 @@ https://github.com/yzslab/gaussian-splatting-lightning
 import os
 import re
 import shutil
+import sys
+import warnings
 from typing import Optional, List, Dict
 
 from .base import TrainingBackend, TrainingConfig, TrainingProgress, TrainingStatus
@@ -90,13 +92,21 @@ MASK SUPPORT:
                 return env_path
 
         # Search common locations
-        search_paths = [
-            os.path.expanduser("~/gaussian-splatting-lightning"),
-            os.path.expanduser("~/repos/gaussian-splatting-lightning"),
-            "C:/gaussian-splatting-lightning",
-            "C:/Projects/gaussian-splatting-lightning",
-            "D:/gaussian-splatting-lightning",
-        ]
+        if sys.platform == 'win32':
+            search_paths = [
+                os.path.expanduser("~/gaussian-splatting-lightning"),
+                os.path.expanduser("~/repos/gaussian-splatting-lightning"),
+                "C:/gaussian-splatting-lightning",
+                "C:/Projects/gaussian-splatting-lightning",
+                "D:/gaussian-splatting-lightning",
+            ]
+        else:
+            search_paths = [
+                os.path.expanduser("~/gaussian-splatting-lightning"),
+                os.path.expanduser("~/repos/gaussian-splatting-lightning"),
+                os.path.expanduser("~/code/gaussian-splatting-lightning"),
+                "/opt/gaussian-splatting-lightning",
+            ]
 
         for path in search_paths:
             normalized = normalize_path(path)
@@ -207,30 +217,46 @@ MASK SUPPORT:
         if os.path.exists(sparse_dir):
             cmd.extend(["--data.parser.sparse_dir", sparse_dir])
 
-        # Check for masks directory - only add if masks actually exist
+        # Check for masks directory - only add if masks actually exist and match images
         masks_dir = os.path.join(config.data_path, "masks")
-        if os.path.exists(masks_dir):
-            mask_files = [f for f in os.listdir(masks_dir) if f.endswith('.png')]
-            if len(mask_files) > 0:
-                # Verify at least some masks match image naming convention
-                # GS-Lightning expects: image_0001.png.png (image filename + .png)
-                images_dir = os.path.join(config.data_path, "images")
-                if os.path.exists(images_dir):
-                    image_files = [f for f in os.listdir(images_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
-                    # Check if any mask matches an image
-                    matching_masks = 0
-                    for img in image_files:
-                        expected_mask = f"{img}.png"
-                        if expected_mask in mask_files:
-                            matching_masks += 1
-
+        mask_dir_to_use = None
+        if os.path.isdir(masks_dir):
+            images_dir = os.path.join(config.data_path, "images")
+            if os.path.isdir(images_dir):
+                image_files = [
+                    f for f in os.listdir(images_dir)
+                    if f.lower().endswith(('.png', '.jpg', '.jpeg'))
+                ]
+                mask_files = {
+                    f.lower() for f in os.listdir(masks_dir)
+                    if f.lower().endswith('.png')
+                }
+                if image_files and mask_files:
+                    # GS-Lightning expects: image_0001.png.png (image filename + .png)
+                    matching_masks = sum(
+                        1 for img in image_files
+                        if f"{img}.png".lower() in mask_files
+                    )
                     if matching_masks > 0:
-                        cmd.extend(["--data.parser.mask_dir", masks_dir])
+                        mask_dir_to_use = masks_dir
+                    else:
+                        warnings.warn(
+                            "GS-Lightning masks directory found but no masks matched "
+                            "the expected naming (image filename + .png). "
+                            "Skipping --data.parser.mask_dir."
+                        )
+
+        if mask_dir_to_use:
+            cmd.extend(["--data.parser.mask_dir", mask_dir_to_use])
 
         # Save checkpoints
-        if config.save_iterations:
-            # GS-Lightning uses different checkpoint syntax
-            pass  # Handled by default
+        if config.save_iterations and len(config.save_iterations) > 1:
+            # NOTE: GS-Lightning checkpoint scheduling is not wired up here yet.
+            warnings.warn(
+                "GS-Lightning save iterations are not configurable via this addon yet. "
+                "Default checkpointing will be used. "
+                "If you need custom save intervals, pass the appropriate flags in Extra Arguments."
+            )
 
         # White background - not a standard flag, skip for now
         # if config.white_background:

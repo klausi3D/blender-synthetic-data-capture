@@ -349,11 +349,9 @@ class OutputValidator:
             total, used, free = shutil.disk_usage(output_path)
             free_gb = free / (1024 ** 3)
 
-            # Estimate required space
-            scene = context.scene
-            res_x = scene.render.resolution_x
-            res_y = scene.render.resolution_y
-            estimated_size_mb = (res_x * res_y * 4 * settings.camera_count) / (1024 ** 2)
+            # Estimate required space based on enabled outputs
+            estimate = estimate_capture_size(settings, context)
+            estimated_size_gb = estimate['total_gb']
 
             if free_gb < 1.0:
                 result.add_warning(
@@ -361,10 +359,10 @@ class OutputValidator:
                     f"Low disk space: {free_gb:.1f} GB free",
                     "Free up space before capture"
                 )
-            elif estimated_size_mb / 1024 > free_gb * 0.8:
+            elif estimated_size_gb > free_gb * 0.8:
                 result.add_warning(
                     "output",
-                    f"Capture may require ~{estimated_size_mb/1024:.1f} GB",
+                    f"Capture may require ~{estimated_size_gb:.1f} GB",
                     f"Only {free_gb:.1f} GB available"
                 )
         except Exception:
@@ -416,6 +414,14 @@ class CoverageValidator:
         return result
 
 
+def _get_preview_cameras():
+    """Return preview cameras created by the GS preview operator."""
+    return [
+        obj for obj in bpy.data.objects
+        if obj.type == 'CAMERA' and obj.name.startswith('GS_Cam_')
+    ]
+
+
 def validate_all(context, settings, cameras=None) -> ValidationResult:
     """Run all validators and combine results.
 
@@ -430,6 +436,9 @@ def validate_all(context, settings, cameras=None) -> ValidationResult:
         Combined ValidationResult from all validators
     """
     combined = ValidationResult()
+
+    if cameras is None:
+        cameras = _get_preview_cameras()
 
     # Run each validator
     validators = [
@@ -519,7 +528,13 @@ def estimate_capture_size(settings, context) -> dict:
         normal_bytes = pixels * 6  # 16-bit float * 3 channels, minimal compression
         normals_mb = (normal_bytes * num_cameras) / (1024 * 1024)
 
-    total_mb = images_mb + depth_mb + normals_mb + 10  # +10MB for metadata
+    # Masks (if enabled) - single-channel PNG
+    masks_mb = 0
+    if getattr(settings, 'export_masks', False):
+        mask_bytes = pixels * 1 * png_ratio
+        masks_mb = (mask_bytes * num_cameras) / (1024 * 1024)
+
+    total_mb = images_mb + depth_mb + normals_mb + masks_mb + 10  # +10MB for metadata
     total_gb = total_mb / 1024
 
     warning = None
@@ -532,6 +547,7 @@ def estimate_capture_size(settings, context) -> dict:
         'images_mb': round(images_mb, 1),
         'depth_mb': round(depth_mb, 1),
         'normals_mb': round(normals_mb, 1),
+        'masks_mb': round(masks_mb, 1),
         'total_mb': round(total_mb, 1),
         'total_gb': round(total_gb, 2),
         'warning': warning
