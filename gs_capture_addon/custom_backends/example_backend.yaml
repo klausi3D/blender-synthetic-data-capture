@@ -1,0 +1,143 @@
+# Example Custom Training Backend Configuration
+# Copy this file and modify for your own training framework
+
+# Schema version (for future compatibility)
+schema_version: "1.0"
+
+# Unique identifier for this backend
+id: "example_custom"
+
+# Display name and description
+name: "Example Custom Backend"
+description: "Template for custom Gaussian Splatting training backends"
+version: "1.0.0"
+website: "https://github.com/example/gs-trainer"
+
+# How to detect if the backend is installed
+detection:
+  # Method: 'file' (check for file), 'command' (check PATH), 'python_import' (check module)
+  method: file
+  # For 'file' method: file to check relative to install_path
+  check_file: "train.py"
+
+# Where to find the installation
+install_path:
+  # Addon preference key to check (optional)
+  preference_key: "custom_backend_path"
+  # Environment variable to check (optional)
+  env_var: "CUSTOM_GS_PATH"
+  # Default search locations
+  search_paths:
+    - "~/custom-gs"
+    - "C:/Projects/custom-gs"
+
+# Python/conda environment configuration
+environment:
+  # Type: 'conda', 'venv', or 'system'
+  type: conda
+  # Environment name (for conda)
+  name: "custom_gs_env"
+  # Preference key for environment name (optional)
+  preference_key: "custom_backend_env"
+
+# Data format requirements
+data_format:
+  # Required format: determines what directories/files must exist
+  type: colmap
+
+  # Required directories (relative to data_path)
+  required_dirs:
+    - "images"
+    - "sparse/0"
+
+  # Required files (relative to data_path)
+  required_files:
+    - "sparse/0/cameras.txt"
+    - "sparse/0/images.txt"
+    - "sparse/0/points3D.txt"
+
+  # Alternative files (binary COLMAP format)
+  alternative_files:
+    - "sparse/0/cameras.bin"
+    - "sparse/0/images.bin"
+    - "sparse/0/points3D.bin"
+
+# Command line configuration
+command:
+  # Entry point script (relative to install_path)
+  script: "train.py"
+
+  # Command template with placeholders:
+  # {python} - Python executable path
+  # {script} - Full script path
+  # {data_path} - Training data directory
+  # {output_path} - Output directory
+  # {iterations} - Number of iterations
+  # {save_iterations} - Checkpoint iterations (comma-separated)
+  # {white_background} - White background flag (or empty)
+  # {extra_args} - Extra arguments from user
+  # {gpu_id} - GPU device ID
+  template: >
+    {python} {script}
+    --source_path {data_path}
+    --model_path {output_path}
+    --iterations {iterations}
+    {white_background}
+    {extra_args}
+
+  # Flag mappings
+  flags:
+    white_background: "--white_background"
+
+# Output parsing configuration (regex patterns)
+output_parsing:
+  # Iteration progress pattern
+  iteration:
+    pattern: "\\[ITER\\s*(\\d+)\\]"
+    group: 1
+
+  # Loss value pattern
+  loss:
+    pattern: "loss[=:\\s]+([\\d.]+)"
+    group: 1
+
+  # PSNR value pattern
+  psnr:
+    pattern: "PSNR[=:\\s]+([\\d.]+)"
+    group: 1
+
+  # Completion indicators
+  completion:
+    patterns:
+      - "Training complete"
+      - "Finished"
+      - "Done"
+
+  # Error indicators
+  error:
+    patterns:
+      - "error"
+      - "exception"
+      - "failed"
+      - "CUDA out of memory"
+    case_sensitive: false
+
+# Output file locations (relative to output_path)
+output_files:
+  model_path: "point_cloud/iteration_{iterations}/point_cloud.ply"
+
+# Optional: custom install instructions
+install_instructions: |
+  To install this custom backend:
+
+  1. Clone the repository:
+     git clone https://github.com/example/gs-trainer
+
+  2. Create conda environment:
+     conda create -n custom_gs_env python=3.10
+     conda activate custom_gs_env
+
+  3. Install dependencies:
+     pip install -r requirements.txt
+
+  4. Set path in Blender addon preferences

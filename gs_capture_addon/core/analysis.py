@@ -79,11 +79,14 @@ def calculate_mesh_surface_area(obj):
     # Need to ensure mesh has calculated loop triangles
     mesh.calc_loop_triangles()
 
+    # Transform each vertex once in world space to avoid per-triangle matrix multiplies
+    world_verts = [matrix @ v.co for v in mesh.vertices]
+
     for tri in mesh.loop_triangles:
         # Get world-space vertices
-        v0 = matrix @ mesh.vertices[tri.vertices[0]].co
-        v1 = matrix @ mesh.vertices[tri.vertices[1]].co
-        v2 = matrix @ mesh.vertices[tri.vertices[2]].co
+        v0 = world_verts[tri.vertices[0]]
+        v1 = world_verts[tri.vertices[1]]
+        v2 = world_verts[tri.vertices[2]]
 
         # Calculate triangle area using cross product
         edge1 = v1 - v0
@@ -254,7 +257,18 @@ def analyze_texture_quality(obj):
             elif node.type == 'DISPLACEMENT':
                 analysis.has_displacement = True
 
-    # Calculate texture score
+    _apply_texture_scoring(analysis)
+
+    return analysis
+
+
+def _apply_texture_scoring(analysis):
+    """Apply texture scoring to a TextureAnalysis instance.
+
+    Keeps scoring consistent for per-object and aggregated analysis.
+    Displacement remains warning-only and does not affect score.
+    """
+    # Base score from max resolution
     if analysis.max_resolution >= 4096:
         analysis.texture_score = 1.0
         analysis.estimated_detail_level = 'ULTRA'
@@ -268,11 +282,9 @@ def analyze_texture_quality(obj):
         analysis.texture_score = 0.25
         analysis.estimated_detail_level = 'LOW'
 
-    # Boost for normal maps
+    # Boost for normal maps (matches per-object behavior)
     if analysis.has_normal_maps:
         analysis.texture_score = min(1.0, analysis.texture_score + 0.15)
-
-    return analysis
 
 
 def find_detail_hotspots(objects, num_hotspots=5):
@@ -342,27 +354,23 @@ def calculate_adaptive_settings(objects, quality_preset='AUTO'):
     """
     result = AdaptiveCaptureResult()
 
-    # Aggregate mesh analysis
+    # Aggregate mesh + texture analysis in a single pass
     total_verts = 0
     total_faces = 0
     total_area = 0
     max_detail = 0
+    max_tex_res = 0
 
     for obj in objects:
+        if obj.type != 'MESH':
+            continue
+
         mesh_analysis = analyze_mesh_complexity(obj)
         total_verts += mesh_analysis.vertex_count
         total_faces += mesh_analysis.face_count
         total_area += mesh_analysis.surface_area
         max_detail = max(max_detail, mesh_analysis.detail_score)
 
-    result.mesh_analysis.vertex_count = total_verts
-    result.mesh_analysis.face_count = total_faces
-    result.mesh_analysis.surface_area = total_area
-    result.mesh_analysis.detail_score = max_detail
-
-    # Aggregate texture analysis
-    max_tex_res = 0
-    for obj in objects:
         tex_analysis = analyze_texture_quality(obj)
         max_tex_res = max(max_tex_res, tex_analysis.max_resolution)
         if tex_analysis.has_normal_maps:
@@ -370,7 +378,13 @@ def calculate_adaptive_settings(objects, quality_preset='AUTO'):
         if tex_analysis.has_displacement:
             result.texture_analysis.has_displacement = True
 
+    result.mesh_analysis.vertex_count = total_verts
+    result.mesh_analysis.face_count = total_faces
+    result.mesh_analysis.surface_area = total_area
+    result.mesh_analysis.detail_score = max_detail
     result.texture_analysis.max_resolution = max_tex_res
+    # Compute aggregated texture score and detail level from max resolution + normal maps
+    _apply_texture_scoring(result.texture_analysis)
 
     # Determine quality preset if AUTO
     if quality_preset == 'AUTO':

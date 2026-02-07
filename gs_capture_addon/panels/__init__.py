@@ -6,3 +6,4 @@ from . import adaptive
 from . import render
 from . import lighting
 from . import batch
+from . import progress

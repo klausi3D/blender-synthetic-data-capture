@@ -26,7 +26,7 @@ class GSCAPTURE_PT_main_panel(Panel):
             # Show progress
             box.label(text=settings.current_render_info)
             box.prop(settings, "render_progress", text="Progress")
-            box.operator("gs_capture.capture_selected", text="Cancel", icon='CANCEL')
+            box.operator("gs_capture.cancel_capture", text="Cancel", icon='CANCEL')
         else:
             row = box.row(align=True)
             row.scale_y = 1.5
@@ -40,7 +40,7 @@ class GSCAPTURE_PT_main_panel(Panel):
         if settings.enable_checkpoints:
             from ..utils.checkpoint import load_checkpoint
             output_path = bpy.path.abspath(settings.output_path)
-            checkpoint = load_checkpoint(output_path)
+            checkpoint, _ = load_checkpoint(output_path)
             if checkpoint:
                 box = layout.box()
                 box.label(text="Checkpoint Found", icon='FILE_REFRESH')

@@ -152,7 +152,11 @@ def analyze_material(mat, obj_name: str) -> List[MaterialProblem]:
                 ))
 
             # Check specular/roughness for high reflectivity
-            specular = _get_socket_value(principled, 'Specular IOR Level', 0.5)
+            specular = _get_socket_value(principled, 'Specular IOR Level', None)
+            if specular is None:
+                specular = _get_socket_value(principled, 'Specular', 0.5)
+            if specular is None:
+                specular = 0.5
             roughness = _get_socket_value(principled, 'Roughness', 0.5)
 
             if specular > 0.8 and roughness < 0.2:
@@ -243,6 +247,21 @@ def _find_principled_bsdf(node_tree):
     return None
 
 
+def _get_linked_socket_value(socket, default=0.0):
+    """Attempt to read a constant value from a linked socket."""
+    if not socket.links:
+        return default
+
+    from_socket = socket.links[0].from_socket
+    if hasattr(from_socket, 'default_value'):
+        val = from_socket.default_value
+        if hasattr(val, '__iter__') and not isinstance(val, str):
+            return val[0] if len(val) > 0 else default
+        return val
+
+    return default
+
+
 def _get_socket_value(node, socket_name: str, default=0.0):
     """Get value from node socket, handling both connected and unconnected cases."""
     if socket_name not in node.inputs:
@@ -250,10 +269,9 @@ def _get_socket_value(node, socket_name: str, default=0.0):
 
     socket = node.inputs[socket_name]
 
-    # If socket is connected, we can't easily get the value
-    # For MVP, just return default (assume worst case would require node evaluation)
+    # If socket is connected, try to read a constant value from the link.
     if socket.is_linked:
-        return default
+        return _get_linked_socket_value(socket, default)
 
     # Get default value
     if hasattr(socket, 'default_value'):

@@ -23,9 +23,9 @@ class GSCAPTURE_OT_show_coverage_heatmap(Operator):
         if not context.selected_objects:
             return False
 
-        # Check for preview cameras
+        # Check for preview cameras (cameras created with GS_Cam_ prefix)
         preview_cams = [obj for obj in bpy.data.objects
-                       if obj.type == 'CAMERA' and obj.name.startswith('GSCapture_Cam')]
+                       if obj.type == 'CAMERA' and obj.name.startswith('GS_Cam_')]
         return len(preview_cams) > 0
 
     def execute(self, context):
@@ -35,9 +35,9 @@ class GSCAPTURE_OT_show_coverage_heatmap(Operator):
             self.report({'WARNING'}, "No mesh objects selected")
             return {'CANCELLED'}
 
-        # Get preview cameras
+        # Get preview cameras (cameras created with GS_Cam_ prefix)
         cameras = [obj for obj in bpy.data.objects
-                  if obj.type == 'CAMERA' and obj.name.startswith('GSCapture_Cam')]
+                  if obj.type == 'CAMERA' and obj.name.startswith('GS_Cam_')]
 
         if not cameras:
             self.report({'WARNING'}, "No preview cameras found. Generate cameras first.")
@@ -198,13 +198,13 @@ class GSCAPTURE_OT_analyze_coverage(Operator):
             return False
 
         preview_cams = [obj for obj in bpy.data.objects
-                       if obj.type == 'CAMERA' and obj.name.startswith('GSCapture_Cam')]
+                       if obj.type == 'CAMERA' and obj.name.startswith('GS_Cam_')]
         return len(preview_cams) > 0
 
     def execute(self, context):
         mesh_objects = [obj for obj in context.selected_objects if obj.type == 'MESH']
         cameras = [obj for obj in bpy.data.objects
-                  if obj.type == 'CAMERA' and obj.name.startswith('GSCapture_Cam')]
+                  if obj.type == 'CAMERA' and obj.name.startswith('GS_Cam_')]
 
         if not mesh_objects or not cameras:
             self.report({'WARNING'}, "Need mesh objects and preview cameras")

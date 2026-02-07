@@ -11,6 +11,8 @@ from enum import Enum
 from typing import List, Optional, Tuple
 import bpy
 
+from ..utils.coverage import CoverageAnalyzer
+
 
 class ValidationLevel(Enum):
     """Severity level for validation issues."""
@@ -349,11 +351,9 @@ class OutputValidator:
             total, used, free = shutil.disk_usage(output_path)
             free_gb = free / (1024 ** 3)
 
-            # Estimate required space
-            scene = context.scene
-            res_x = scene.render.resolution_x
-            res_y = scene.render.resolution_y
-            estimated_size_mb = (res_x * res_y * 4 * settings.camera_count) / (1024 ** 2)
+            # Estimate required space based on enabled outputs
+            estimate = estimate_capture_size(settings, context)
+            estimated_size_gb = estimate['total_gb']
 
             if free_gb < 1.0:
                 result.add_warning(
@@ -361,10 +361,10 @@ class OutputValidator:
                     f"Low disk space: {free_gb:.1f} GB free",
                     "Free up space before capture"
                 )
-            elif estimated_size_mb / 1024 > free_gb * 0.8:
+            elif estimated_size_gb > free_gb * 0.8:
                 result.add_warning(
                     "output",
-                    f"Capture may require ~{estimated_size_mb/1024:.1f} GB",
+                    f"Capture may require ~{estimated_size_gb:.1f} GB",
                     f"Only {free_gb:.1f} GB available"
                 )
         except Exception:
@@ -410,10 +410,91 @@ class CoverageValidator:
                 "Increase camera count for better coverage"
             )
 
-        # TODO: Implement detailed coverage analysis using utils/coverage.py
-        # For now, just do basic validation
+        mesh_objects = self._get_target_objects(context, settings)
+        if not mesh_objects:
+            result.add_info(
+                "coverage",
+                "Coverage validation skipped (no mesh objects found)"
+            )
+            return result
+
+        total_vertices = sum(
+            len(obj.data.vertices)
+            for obj in mesh_objects
+            if obj.type == 'MESH' and obj.data
+        )
+
+        if total_vertices == 0:
+            result.add_info(
+                "coverage",
+                "Coverage validation skipped (no vertices found)"
+            )
+            return result
+
+        # Skip heavy analysis for very large meshes to avoid blocking the UI.
+        if total_vertices > 200000:
+            result.add_info(
+                "coverage",
+                f"Coverage validation skipped for {total_vertices} vertices. "
+                "Use the Coverage Heatmap for detailed analysis."
+            )
+            return result
+
+        analyzer = CoverageAnalyzer(mesh_objects, cameras)
+        coverage = analyzer.calculate_vertex_coverage()
+        stats = analyzer.get_coverage_statistics(coverage)
+
+        if stats['total_vertices'] == 0:
+            result.add_info(
+                "coverage",
+                "Coverage validation skipped (no valid vertices found)"
+            )
+            return result
+
+        poorly_ratio = stats['poorly_covered'] / stats['total_vertices']
+        if poorly_ratio < 0.05 and stats['min'] >= 3:
+            rating = 'EXCELLENT'
+        elif poorly_ratio < 0.15 and stats['min'] >= 2:
+            rating = 'GOOD'
+        elif poorly_ratio < 0.30:
+            rating = 'FAIR'
+        else:
+            rating = 'POOR'
+
+        summary = (
+            f"Coverage rating: {rating}. "
+            f"Min {stats['min']} | Mean {stats['mean']:.1f} cameras per vertex"
+        )
+
+        if rating in ('POOR', 'FAIR'):
+            result.add_warning(
+                "coverage",
+                summary,
+                "Increase camera count or adjust the camera distribution"
+            )
+        else:
+            result.add_info("coverage", summary)
 
         return result
+
+    def _get_target_objects(self, context, settings):
+        """Get list of target objects for coverage analysis."""
+        if settings.target_collection:
+            collection = bpy.data.collections.get(settings.target_collection)
+            if collection:
+                return [obj for obj in collection.all_objects
+                        if obj.type == 'MESH']
+
+        return [obj for obj in context.selected_objects
+                if obj.type == 'MESH']
+
+
+def _get_preview_cameras():
+    """Return preview cameras created by the GS preview operator."""
+    return [
+        obj for obj in bpy.data.objects
+        if obj.type == 'CAMERA' and obj.name.startswith('GS_Cam_')
+    ]
 
 
 def validate_all(context, settings, cameras=None) -> ValidationResult:
@@ -430,6 +511,9 @@ def validate_all(context, settings, cameras=None) -> ValidationResult:
         Combined ValidationResult from all validators
     """
     combined = ValidationResult()
+
+    if cameras is None:
+        cameras = _get_preview_cameras()
 
     # Run each validator
     validators = [
@@ -519,7 +603,13 @@ def estimate_capture_size(settings, context) -> dict:
         normal_bytes = pixels * 6  # 16-bit float * 3 channels, minimal compression
         normals_mb = (normal_bytes * num_cameras) / (1024 * 1024)
 
-    total_mb = images_mb + depth_mb + normals_mb + 10  # +10MB for metadata
+    # Masks (if enabled) - single-channel PNG
+    masks_mb = 0
+    if getattr(settings, 'export_masks', False):
+        mask_bytes = pixels * 1 * png_ratio
+        masks_mb = (mask_bytes * num_cameras) / (1024 * 1024)
+
+    total_mb = images_mb + depth_mb + normals_mb + masks_mb + 10  # +10MB for metadata
     total_gb = total_mb / 1024
 
     warning = None
@@ -532,6 +622,7 @@ def estimate_capture_size(settings, context) -> dict:
         'images_mb': round(images_mb, 1),
         'depth_mb': round(depth_mb, 1),
         'normals_mb': round(normals_mb, 1),
+        'masks_mb': round(masks_mb, 1),
         'total_mb': round(total_mb, 1),
         'total_gb': round(total_gb, 2),
         'warning': warning

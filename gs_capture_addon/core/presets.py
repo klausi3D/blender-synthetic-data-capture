@@ -328,8 +328,12 @@ def apply_preset_to_settings(preset: FrameworkPreset, settings, scene):
     settings.current_preset = preset.id
 
 
-def get_preset_enum_items():
+def get_preset_enum_items(self, context):
     """Get preset items for Blender EnumProperty.
+
+    Args:
+        self: Operator/property owner
+        context: Blender context
 
     Returns:
         List of (id, name, description) tuples

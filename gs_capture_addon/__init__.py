@@ -17,20 +17,18 @@ Features:
 - Coverage analysis with viewport visualization
 - COLMAP and transforms.json export
 
-For documentation and support, visit:
-https://github.com/your-repo/gs-capture-blender
 """
 
 bl_info = {
     "name": "GS Capture - Gaussian Splatting Training Data Generator",
     "author": "Custom",
-    "version": (2, 2, 0),
+    "version": (2, 2, 1),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar > GS Capture",
     "description": "Professional training data generator for 3D Gaussian Splatting with scene analysis, presets, and validation",
     "category": "Render",
-    "doc_url": "https://github.com/your-repo/gs-capture-blender",
-    "tracker_url": "https://github.com/your-repo/gs-capture-blender/issues",
+    "doc_url": "https://github.com/klausi3D/GS-Capture-Pro",
+    "tracker_url": "https://github.com/klausi3D/GS-Capture-Pro/issues",
 }
 
 import bpy
@@ -52,6 +50,7 @@ from .panels import batch as batch_panel
 from .panels import presets as preset_panels
 from .panels import training as training_panels
 from .panels import warnings as warnings_panel
+from .panels import progress as progress_panel
 
 
 # All classes to register (order matters for UI)
@@ -71,6 +70,7 @@ classes = [
     # Operators - Capture
     capture.GSCAPTURE_OT_capture_selected,
     capture.GSCAPTURE_OT_capture_collection,
+    capture.GSCAPTURE_OT_cancel_capture,
 
     # Operators - Batch
     batch.GSCAPTURE_OT_batch_capture,
@@ -97,6 +97,9 @@ classes = [
     training_operators.GSCAPTURE_OT_BrowseTrainingOutput,
     training_operators.GSCAPTURE_OT_OpenTrainingOutput,
     training_operators.GSCAPTURE_OT_ShowInstallInstructions,
+    training_operators.GSCAPTURE_OT_UseLastCapture,
+    training_operators.GSCAPTURE_OT_ReloadCustomBackends,
+    training_operators.GSCAPTURE_OT_OpenCustomBackendsFolder,
 
     # Operators - Coverage
     coverage_operators.GSCAPTURE_OT_show_coverage_heatmap,
@@ -104,12 +107,14 @@ classes = [
     coverage_operators.GSCAPTURE_OT_analyze_coverage,
 
     # Operators - Warnings/Analysis Panel
-    warnings_panel.GSCAPTURE_OT_analyze_scene,
+    warnings_panel.GSCAPTURE_OT_analyze_scene_mvp,
     warnings_panel.GSCAPTURE_OT_show_material_problems,
     warnings_panel.GSCAPTURE_OT_fix_material_problems,
 
     # Panels (order determines UI layout)
-    warnings_panel.GSCAPTURE_PT_warnings,  # Scene Analysis at top
+    progress_panel.GSCAPTURE_PT_progress_panel,  # Progress panel at very top
+    progress_panel.GSCAPTURE_OT_clear_last_capture,  # Clear stats operator
+    warnings_panel.GSCAPTURE_PT_warnings,  # Scene Analysis
     preset_panels.GSCAPTURE_PT_PresetsPanel,
     preset_panels.GSCAPTURE_PT_PresetsQuickSettings,
     main.GSCAPTURE_PT_main_panel,
@@ -119,8 +124,10 @@ classes = [
     render.GSCAPTURE_PT_render_panel,
     lighting.GSCAPTURE_PT_lighting_panel,
     batch_panel.GSCAPTURE_PT_batch_panel,
+    training_panels.GSCAPTURE_OT_ApplyRecommendedExportSettings,
     training_panels.GSCAPTURE_PT_TrainingPanel,
     training_panels.GSCAPTURE_PT_TrainingAdvanced,
+    training_panels.GSCAPTURE_PT_TrainingCustomBackends,
     training_panels.GSCAPTURE_PT_TrainingLog,
 ]
 

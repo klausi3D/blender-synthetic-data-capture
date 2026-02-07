@@ -12,25 +12,25 @@ def get_eevee_engine_name():
     Blender 4.2+ uses BLENDER_EEVEE_NEXT, but 5.0 reverted to BLENDER_EEVEE.
 
     Returns:
-        str: The correct Eevee engine identifier
+        tuple: (engine_name: str, warning_message: str or None)
     """
     scene = bpy.context.scene if hasattr(bpy.context, 'scene') else None
+    warning = None
     if scene:
         try:
             render_prop = scene.bl_rna.properties['render'].fixed_type.properties['engine']
             available_engines = [item.identifier for item in render_prop.enum_items]
             if 'BLENDER_EEVEE_NEXT' in available_engines:
-                return 'BLENDER_EEVEE_NEXT'
+                return 'BLENDER_EEVEE_NEXT', None
             elif 'BLENDER_EEVEE' in available_engines:
-                return 'BLENDER_EEVEE'
+                return 'BLENDER_EEVEE', None
         except Exception as e:
-            print(f"Engine detection warning: {e}")
+            warning = f"Engine detection warning: {e}"
 
     # Fallback: version-based detection
     if bpy.app.version >= (4, 2, 0) and bpy.app.version < (5, 0, 0):
-        return 'BLENDER_EEVEE_NEXT'
-    else:
-        return 'BLENDER_EEVEE'
+        return 'BLENDER_EEVEE_NEXT', warning
+    return 'BLENDER_EEVEE', warning
 
 
 def store_lighting_state(context):
@@ -71,6 +71,9 @@ def setup_neutral_lighting(context, settings):
     Args:
         context: Blender context
         settings: GSCaptureSettings with lighting configuration
+
+    Returns:
+        str or None: Warning message if fallback lighting was used.
     """
     world = context.scene.world
     if not world:
@@ -115,16 +118,17 @@ def setup_neutral_lighting(context, settings):
             env_tex.location = (-300, 0)
 
             # Load HDR image
+            warning = None
             try:
                 img = bpy.data.images.load(bpy.path.abspath(settings.hdr_path))
                 env_tex.image = img
             except Exception as e:
-                print(f"Failed to load HDR: {e}")
+                warning = f"Failed to load HDR: {e}"
                 # Fallback to white
                 background = nodes.new('ShaderNodeBackground')
                 background.inputs['Color'].default_value = (1, 1, 1, 1)
                 links.new(background.outputs['Background'], output.inputs['Surface'])
-                return
+                return warning
 
             background = nodes.new('ShaderNodeBackground')
             background.location = (0, 0)
@@ -132,6 +136,8 @@ def setup_neutral_lighting(context, settings):
 
             links.new(env_tex.outputs['Color'], background.inputs['Color'])
             links.new(background.outputs['Background'], output.inputs['Surface'])
+            if warning:
+                return warning
         else:
             # No HDR specified, use white
             background = nodes.new('ShaderNodeBackground')
@@ -144,6 +150,8 @@ def setup_neutral_lighting(context, settings):
             if obj.type == 'LIGHT':
                 obj.hide_render = True
                 obj.hide_viewport = True
+
+    return None
 
 
 def create_studio_lighting(context, settings):

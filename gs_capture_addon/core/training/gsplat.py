@@ -6,10 +6,10 @@ https://github.com/nerfstudio-project/gsplat
 import os
 import re
 import shutil
-import sys
 from typing import Optional, List, Dict
 
 from .base import TrainingBackend, TrainingConfig, TrainingProgress, TrainingStatus
+from ...utils.paths import normalize_path, get_conda_base, get_conda_python
 
 
 class GsplatBackend(TrainingBackend):
@@ -36,31 +36,80 @@ To install gsplat:
    cd gsplat/examples
 """
 
-    def __init__(self, examples_path: Optional[str] = None):
+    def __init__(self, examples_path: Optional[str] = None, conda_env: Optional[str] = None):
         """Initialize backend.
 
         Args:
             examples_path: Path to gsplat examples directory
+            conda_env: Conda environment name for gsplat
         """
         self._examples_path = examples_path
+        self._conda_env = conda_env
 
     def is_available(self) -> bool:
         """Check if gsplat is installed."""
-        try:
-            import gsplat
+        # Check if gsplat conda env exists and has python
+        conda_env = self._get_conda_env()
+        python_path = get_conda_python(conda_env)
+        if python_path:
             return True
-        except ImportError:
-            return False
+        return False
+
+    def _get_conda_env(self) -> str:
+        """Get conda environment name from preferences."""
+        if self._conda_env:
+            return self._conda_env
+        try:
+            import bpy
+            prefs = bpy.context.preferences.addons.get('gs_capture_addon')
+            if prefs and prefs.preferences:
+                return prefs.preferences.gsplat_env
+        except Exception:
+            pass
+        return "gsplat"  # Default
+
+    def _get_conda_python_path(self) -> Optional[str]:
+        """Get Python executable from conda environment."""
+        conda_env = self._get_conda_env()
+        python_path = get_conda_python(conda_env)
+        if python_path:
+            return python_path
+        return None
 
     def get_install_path(self) -> Optional[str]:
         """Get gsplat examples path."""
+        def _validated_examples_path(path: Optional[str]) -> Optional[str]:
+            if not path:
+                return None
+            normalized = normalize_path(path)
+            trainer_script = os.path.join(normalized, "simple_trainer.py")
+            if os.path.exists(trainer_script):
+                return normalized
+            return None
+
+        # Check explicitly provided path
         if self._examples_path:
-            return self._examples_path
+            validated = _validated_examples_path(self._examples_path)
+            if validated:
+                return validated
+
+        # Check addon preferences
+        try:
+            import bpy
+            prefs = bpy.context.preferences.addons.get('gs_capture_addon')
+            if prefs and prefs.preferences:
+                pref_path = getattr(prefs.preferences, 'gsplat_examples_path', '')
+                validated = _validated_examples_path(pref_path)
+                if validated:
+                    return validated
+        except Exception:
+            pass
 
         # Check environment variable
         env_path = os.environ.get("GSPLAT_EXAMPLES_PATH")
-        if env_path and os.path.exists(env_path):
-            return env_path
+        validated = _validated_examples_path(env_path)
+        if validated:
+            return validated
 
         # Search common locations
         search_paths = [
@@ -70,8 +119,9 @@ To install gsplat:
         ]
 
         for path in search_paths:
-            if os.path.exists(os.path.join(path, "simple_trainer.py")):
-                return path
+            validated = _validated_examples_path(path)
+            if validated:
+                return validated
 
         return None
 
@@ -105,26 +155,30 @@ To install gsplat:
         """Build training command."""
         examples_path = self.get_install_path()
 
-        if examples_path:
-            # Use gsplat example trainer
-            trainer_script = os.path.join(examples_path, "simple_trainer.py")
-            cmd = [
-                sys.executable,
-                trainer_script,
-                "--data_dir", config.data_path,
-                "--result_dir", config.output_path,
-                "--iterations", str(config.iterations),
-            ]
-        else:
-            # Fallback: assume gsplat is importable and use inline training
-            cmd = [
-                sys.executable, "-c",
-                f"""
-import gsplat
-# Minimal training script
-print("gsplat training not implemented without examples")
-"""
-            ]
+        # Get conda Python
+        python_exe = self._get_conda_python_path()
+        if not python_exe:
+            raise RuntimeError(
+                "Could not find Python in conda environment. "
+                "Please ensure the 'gsplat' conda environment exists."
+            )
+
+        if not examples_path:
+            raise RuntimeError(
+                "gsplat examples path not found. Set 'gsplat Examples Path' in the addon "
+                "preferences to the gsplat/examples directory (must contain simple_trainer.py), "
+                "or set the GSPLAT_EXAMPLES_PATH environment variable to that directory."
+            )
+
+        # Use gsplat example trainer
+        trainer_script = os.path.join(examples_path, "simple_trainer.py")
+        cmd = [
+            python_exe,
+            trainer_script,
+            "--data_dir", config.data_path,
+            "--result_dir", config.output_path,
+            "--iterations", str(config.iterations),
+        ]
 
         # Extra args
         cmd.extend(config.extra_args)

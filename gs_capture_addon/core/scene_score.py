@@ -60,31 +60,6 @@ def calculate_bounding_box(objects) -> Tuple[Tuple[float, float, float], Tuple[f
         if obj.type != 'MESH':
             continue
 
-        # Get world-space bounding box corners
-        bbox_corners = [obj.matrix_world @ bpy.types.Object.bound_box[i] for i in range(8)]
-
-        # Actually use the bound_box property
-        for corner in obj.bound_box:
-            world_corner = obj.matrix_world @ bpy.types.Object.bl_rna.properties['bound_box'].default
-
-    # Simpler approach: use evaluated mesh
-    for obj in objects:
-        if obj.type != 'MESH':
-            continue
-
-        # Get bounding box in world space
-        for i in range(8):
-            corner = obj.bound_box[i]
-            world_corner = obj.matrix_world @ bpy.types.Object.bl_rna.properties.get('location', corner)
-
-    # Even simpler: calculate from vertices
-    min_coords = [float('inf')] * 3
-    max_coords = [float('-inf')] * 3
-
-    for obj in objects:
-        if obj.type != 'MESH':
-            continue
-
         mesh = obj.data
         matrix = obj.matrix_world
 

@@ -19,12 +19,12 @@ class GSCAPTURE_PT_warnings(Panel):
 
     def draw(self, context):
         layout = self.layout
-        settings = context.scene.gs_capture
+        settings = context.scene.gs_capture_settings
 
         # Analyze button
         row = layout.row(align=True)
         row.scale_y = 1.2
-        row.operator("gs_capture.analyze_scene", text="Analyze Scene", icon='VIEWZOOM')
+        row.operator("gs_capture.analyze_scene_mvp", text="Analyze Scene", icon='VIEWZOOM')
 
         # Scene Score display
         if settings.scene_analyzed:
@@ -124,7 +124,7 @@ class GSCAPTURE_OT_analyze_scene_mvp(bpy.types.Operator):
         from ..core.material_analyzer import analyze_objects, get_problem_summary, ProblemSeverity
         from ..core.scene_score import analyze_scene, SceneGrade
 
-        settings = context.scene.gs_capture
+        settings = context.scene.gs_capture_settings
         mesh_objects = [obj for obj in context.selected_objects if obj.type == 'MESH']
 
         if not mesh_objects:
@@ -215,7 +215,7 @@ class GSCAPTURE_OT_fix_material_problems(bpy.types.Operator):
         fixed, unfixable = fix_all_problems(mesh_objects)
 
         # Re-analyze
-        bpy.ops.gs_capture.analyze_scene()
+        bpy.ops.gs_capture.analyze_scene_mvp()
 
         if fixed > 0:
             self.report({'INFO'}, f"Fixed {fixed} issues. {unfixable} issues require manual fixes.")
@@ -228,7 +228,7 @@ class GSCAPTURE_OT_fix_material_problems(bpy.types.Operator):
 # Registration
 classes = [
     GSCAPTURE_PT_warnings,
-    GSCAPTURE_OT_analyze_scene,
+    GSCAPTURE_OT_analyze_scene_mvp,
     GSCAPTURE_OT_show_material_problems,
     GSCAPTURE_OT_fix_material_problems,
 ]
