@@ -27,8 +27,8 @@ bl_info = {
     "location": "View3D > Sidebar > GS Capture",
     "description": "Professional training data generator for 3D Gaussian Splatting with scene analysis, presets, and validation",
     "category": "Render",
-    "doc_url": "https://github.com/klausi3D/GS-Capture-Pro",
-    "tracker_url": "https://github.com/klausi3D/GS-Capture-Pro/issues",
+    "doc_url": "https://github.com/klausi3D/blender-synthetic-data-capture",
+    "tracker_url": "https://github.com/klausi3D/blender-synthetic-data-capture/issues",
 }
 
 import bpy

@@ -1,8 +1,8 @@
-site_name: GS Capture Docs
+site_name: Blender Synthetic Data Capture Docs
 site_description: User documentation for GS Capture Blender addon
-site_url: https://klausi3d.github.io/GS-Capture-Pro/
-repo_url: https://github.com/klausi3D/GS-Capture-Pro
-repo_name: klausi3D/GS-Capture-Pro
+site_url: https://klausi3d.github.io/blender-synthetic-data-capture/
+repo_url: https://github.com/klausi3D/blender-synthetic-data-capture
+repo_name: klausi3D/blender-synthetic-data-capture
 
 theme:
   name: material
