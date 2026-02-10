@@ -30,7 +30,7 @@ EXCLUDE_EXTS = {
 
 def read_version(init_path: Path) -> str:
     text = init_path.read_text(encoding="utf-8")
-    match = re.search(r'"version"\\s*:\\s*\\((\\d+),\\s*(\\d+),\\s*(\\d+)\\)', text)
+    match = re.search(r'"version"\s*:\s*\((\d+),\s*(\d+),\s*(\d+)\)', text)
     if not match:
         raise RuntimeError(f"Could not find version tuple in {init_path}")
     major, minor, patch = match.groups()

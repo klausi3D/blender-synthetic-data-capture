@@ -21,7 +21,7 @@ Features:
 
 bl_info = {
     "name": "GS Capture - Gaussian Splatting Training Data Generator",
-    "author": "Custom",
+    "author": "Alexander Klaus",
     "version": (2, 2, 1),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar > GS Capture",
