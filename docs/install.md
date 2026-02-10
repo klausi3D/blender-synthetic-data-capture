@@ -11,11 +11,11 @@
 1. Open Blender.
 2. Go to `Edit -> Preferences -> Add-ons`.
 3. Click `Install...` and select `gs_capture_addon-<version>.zip`.
-4. Enable `GS Capture - Gaussian Splatting Training Data Generator`.
+4. Enable `Blender Synthetic Data Capture`.
 
 ## Optional Backend Preferences
 
-Open `Edit -> Preferences -> Add-ons -> GS Capture`.
+Open `Edit -> Preferences -> Add-ons -> Blender Synthetic Data Capture`.
 
 Set paths/env names only for backends you plan to use:
 
@@ -36,4 +36,3 @@ Set paths/env names only for backends you plan to use:
 1. In 3D Viewport press `N`.
 2. Open the `GS Capture` tab.
 3. Confirm capture panels load without errors.
-

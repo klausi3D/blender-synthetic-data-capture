@@ -1,6 +1,6 @@
 # Blender Synthetic Data Capture
 
-GS Capture Pro is a Blender addon for capturing synthetic training datasets for 3D Gaussian Splatting and NeRF pipelines.
+Blender Synthetic Data Capture is a Blender addon for capturing synthetic training datasets for 3D Gaussian Splatting and NeRF pipelines.
 
 ## Documentation
 
@@ -12,7 +12,7 @@ GS Capture Pro is a Blender addon for capturing synthetic training datasets for 
 1. Download the addon zip from Releases (or build with `python3 scripts/package_addon.py`).
 2. In Blender open `Edit -> Preferences -> Add-ons`.
 3. Click `Install...` and select the zip.
-4. Enable `GS Capture - Gaussian Splatting Training Data Generator`.
+4. Enable `Blender Synthetic Data Capture`.
 
 ## Branches
 

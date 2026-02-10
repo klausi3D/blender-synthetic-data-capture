@@ -1,6 +1,6 @@
-# GS Capture - User Guide
+# Blender Synthetic Data Capture - User Guide
 
-GS Capture is a Blender addon for generating training data for 3D Gaussian Splatting and NeRF workflows. It produces camera-synchronized images and optional exports such as COLMAP files, depth maps, normals, and masks.
+Blender Synthetic Data Capture is a Blender addon for generating training data for 3D Gaussian Splatting and NeRF workflows. It produces camera-synchronized images and optional exports such as COLMAP files, depth maps, normals, and masks.
 
 ## Table of Contents
 
@@ -30,7 +30,7 @@ GS Capture is a Blender addon for generating training data for 3D Gaussian Splat
 
 1. In Blender: Edit -> Preferences -> Add-ons
 2. Click Install... and select `gs_capture_addon-<version>.zip` (or your packaged addon zip)
-3. Enable "GS Capture - Gaussian Splatting Training Data Generator"
+3. Enable "Blender Synthetic Data Capture"
 4. Optional: configure training backends in the add-on preferences
 
 ### Training Backend Preferences (Optional)

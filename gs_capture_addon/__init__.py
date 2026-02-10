@@ -3,7 +3,7 @@
 # Generates training images for 3D Gaussian Splatting from Blender scenes
 
 """
-GS Capture - Gaussian Splatting Training Data Generator
+Blender Synthetic Data Capture
 
 A professional-grade Blender addon for generating training data
 for Gaussian Splatting and NeRF models.
@@ -20,12 +20,12 @@ Features:
 """
 
 bl_info = {
-    "name": "GS Capture - Gaussian Splatting Training Data Generator",
+    "name": "Blender Synthetic Data Capture",
     "author": "Alexander Klaus",
     "version": (2, 2, 1),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar > GS Capture",
-    "description": "Professional training data generator for 3D Gaussian Splatting with scene analysis, presets, and validation",
+    "description": "Synthetic multi-view dataset generator for Gaussian Splatting and NeRF (RGB, depth, normals, masks, COLMAP, transforms.json)",
     "category": "Render",
     "doc_url": "https://github.com/klausi3D/blender-synthetic-data-capture",
     "tracker_url": "https://github.com/klausi3D/blender-synthetic-data-capture/issues",
