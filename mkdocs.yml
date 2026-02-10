@@ -1,0 +1,29 @@
+site_name: GS Capture Docs
+site_description: User documentation for GS Capture Blender addon
+site_url: https://klausi3d.github.io/GS-Capture-Pro/
+repo_url: https://github.com/klausi3D/GS-Capture-Pro
+repo_name: klausi3D/GS-Capture-Pro
+
+theme:
+  name: material
+  language: en
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Install: install.md
+  - Quick Start: quickstart.md
+  - Capture And Exports: capture-and-exports.md
+  - Training Backends: training-backends.md
+  - Troubleshooting: troubleshooting.md
+  - Release Notes: release-notes.md
+  - More Guides: more-guides.md
