@@ -6,9 +6,9 @@ Optimized for synthetic data with known cameras (transforms.json).
 No COLMAP needed - directly uses Blender's camera exports.
 
 Usage:
-    python train_gs_simple.py /path/to/captures
-    python train_gs_simple.py /path/to/captures --iterations 50000 --output ./trained
-    python train_gs_simple.py /path/to/parent_folder --batch
+    python tools/train_gs_simple.py /path/to/captures
+    python tools/train_gs_simple.py /path/to/captures --iterations 50000 --output ./trained
+    python tools/train_gs_simple.py /path/to/parent_folder --batch
 """
 
 import os
@@ -267,19 +267,19 @@ def main():
         epilog="""
 Examples:
   # Train single capture
-  python train_gs_simple.py ./gs_capture/MyObject
+  python tools/train_gs_simple.py ./gs_capture/MyObject
   
   # Train with more iterations
-  python train_gs_simple.py ./gs_capture/MyObject --iterations 50000
+  python tools/train_gs_simple.py ./gs_capture/MyObject --iterations 50000
   
   # Batch process all captures in a folder
-  python train_gs_simple.py ./gs_capture --batch
+  python tools/train_gs_simple.py ./gs_capture --batch
   
   # Specify output location
-  python train_gs_simple.py ./gs_capture --batch --output ./my_splats
+  python tools/train_gs_simple.py ./gs_capture --batch --output ./my_splats
   
   # Use nerfstudio instead of original 3DGS
-  python train_gs_simple.py ./gs_capture/MyObject --nerfstudio
+  python tools/train_gs_simple.py ./gs_capture/MyObject --nerfstudio
 
 Environment Variables:
   GAUSSIAN_SPLATTING_PATH - Path to gaussian-splatting repo

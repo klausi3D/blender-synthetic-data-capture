@@ -18,8 +18,8 @@ Requirements:
 - One of: original 3DGS, gsplat, or nerfstudio
 
 Usage:
-    python gs_training_pipeline.py --input /path/to/folders --output /path/to/output
-    python gs_training_pipeline.py --config pipeline_config.yaml
+    python tools/gs_training_pipeline.py --input /path/to/folders --output /path/to/output
+    python tools/gs_training_pipeline.py --config pipeline_config.yaml
 """
 
 import os
@@ -986,16 +986,16 @@ def main():
         epilog="""
 Examples:
   # Process folders with default settings
-  python gs_training_pipeline.py --input ./captures --output ./trained
+  python tools/gs_training_pipeline.py --input ./captures --output ./trained
   
   # Use configuration file
-  python gs_training_pipeline.py --config pipeline_config.yaml
+  python tools/gs_training_pipeline.py --config pipeline_config.yaml
   
   # Create default configuration
-  python gs_training_pipeline.py --create-config my_config.yaml
+  python tools/gs_training_pipeline.py --create-config my_config.yaml
   
   # Process multiple specific folders
-  python gs_training_pipeline.py --input ./obj1 ./obj2 ./obj3 --output ./trained
+  python tools/gs_training_pipeline.py --input ./obj1 ./obj2 ./obj3 --output ./trained
         """
     )
     

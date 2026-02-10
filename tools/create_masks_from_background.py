@@ -8,8 +8,8 @@ and creates masks where background = black, object = white.
 Useful for images rendered without transparent background.
 
 Usage:
-    python create_masks_from_background.py /path/to/capture
-    python create_masks_from_background.py /path/to/capture --threshold 30
+    python tools/create_masks_from_background.py /path/to/capture
+    python tools/create_masks_from_background.py /path/to/capture --threshold 30
 """
 
 import os
@@ -127,13 +127,13 @@ def main():
         epilog="""
 Examples:
   # Create masks with default threshold
-  python create_masks_from_background.py ./capture
+  python tools/create_masks_from_background.py ./capture
 
   # Adjust threshold (higher = more strict background detection)
-  python create_masks_from_background.py ./capture --threshold 40
+  python tools/create_masks_from_background.py ./capture --threshold 40
 
   # Preview first mask
-  python create_masks_from_background.py ./capture --preview
+  python tools/create_masks_from_background.py ./capture --preview
 """
     )
 
