@@ -8,4 +8,4 @@ These internal guides are still useful for advanced users and contributors:
 - [Training Setup (CLI)](guides/training-setup.md)
 - [Pipeline Setup (CLI)](guides/pipeline-setup.md)
 
-For release assets, use the packaged addon zip built by `scripts/package_addon.py`.
+For release assets, use the packaged addon zip built by `tools/package_addon.py`.

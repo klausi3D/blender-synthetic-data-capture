@@ -72,6 +72,7 @@ desktop.ini
 imgui.ini
 nul
 node_tree_dump.json
+local_archive/
 
 # ----- Blender -----
 *.blend1

@@ -43,7 +43,7 @@ jobs:
 
       - name: Package addon
         run: |
-          python scripts/package_addon.py
+          python tools/package_addon.py
           ls -lh dist/
 
       - name: Upload package artifact
@@ -95,25 +95,25 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          & "$env:BLENDER_EXE" --factory-startup --python (Join-Path $pwd "scripts/smoke_release_verification.py")
+          & "$env:BLENDER_EXE" --factory-startup --python (Join-Path $pwd "tests/smoke/smoke_release_verification.py")
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run checkpoint-only smoke
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          & "$env:BLENDER_EXE" --factory-startup --python (Join-Path $pwd "scripts/smoke_checkpoint_resume_only.py")
+          & "$env:BLENDER_EXE" --factory-startup --python (Join-Path $pwd "tests/smoke/smoke_checkpoint_resume_only.py")
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Run object-index mask smoke
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          & "$env:BLENDER_EXE" --factory-startup --python (Join-Path $pwd "scripts/smoke_object_index_mask.py")
+          & "$env:BLENDER_EXE" --factory-startup --python (Join-Path $pwd "tests/smoke/smoke_object_index_mask.py")
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Verify smoke reports
-        run: python scripts/verify_ci_smoke_reports.py
+        run: python tests/smoke/verify_ci_smoke_reports.py
 
       - name: Upload smoke reports and outputs
         uses: actions/upload-artifact@v4
