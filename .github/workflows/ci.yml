@@ -51,10 +51,20 @@ jobs:
           path: dist/*.zip
           if-no-files-found: error
 
-  blender-smoke-windows-4-5:
+  blender-smoke-windows:
     runs-on: windows-latest
     needs: python-sanity
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - blender_version: "4.5.1"
+            blender_series: "Blender4.5"
+            artifact_suffix: "4-5"
+          - blender_version: "5.0.0"
+            blender_series: "Blender5.0"
+            artifact_suffix: "5-0"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -64,12 +74,13 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install Blender 4.5.1
+      - name: Install Blender ${{ matrix.blender_version }}
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $version = "4.5.1"
-          $url = "https://download.blender.org/release/Blender4.5/blender-$version-windows-x64.zip"
+          $version = "${{ matrix.blender_version }}"
+          $series = "${{ matrix.blender_series }}"
+          $url = "https://download.blender.org/release/$series/blender-$version-windows-x64.zip"
           $zipPath = Join-Path $env:RUNNER_TEMP "blender-$version.zip"
           $extractDir = Join-Path $env:RUNNER_TEMP "blender-$version"
           Invoke-WebRequest -Uri $url -OutFile $zipPath
@@ -105,7 +116,6 @@ jobs:
       - name: Upload smoke reports and outputs
         uses: actions/upload-artifact@v4
         with:
-          name: blender-smoke-4-5
+          name: blender-smoke-${{ matrix.artifact_suffix }}
           path: training_out/smoke_feature_verification
           if-no-files-found: error
-
