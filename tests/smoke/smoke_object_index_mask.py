@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Isolated checkpoint resume smoke test for GS Capture."""
+"""Isolated object-index mask smoke test."""
 
 from __future__ import annotations
 
@@ -13,22 +13,20 @@ from pathlib import Path
 import bpy
 
 
-ROOT = Path(__file__).resolve().parents[1]
-OUT_DIR = ROOT / "training_out" / "smoke_feature_verification" / "checkpoint_only"
-REPORT_PATH = ROOT / "training_out" / "smoke_feature_verification" / "checkpoint_only_report.json"
+ROOT = Path(__file__).resolve().parents[2]
+OUT_DIR = ROOT / "training_out" / "smoke_feature_verification" / "object_index_only"
+REPORT_PATH = ROOT / "training_out" / "smoke_feature_verification" / "object_index_only_report.json"
 
 STATE = {
     "phase": "init",
     "start_time": time.time(),
-    "cancel_sent": False,
     "report": {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "blender_version": bpy.app.version_string,
         "platform": sys.platform,
         "events": [],
-        "checkpoint_exists_after_cancel": False,
-        "checkpoint_exists_after_resume": None,
         "images_count": 0,
+        "masks_count": 0,
         "success": False,
         "errors": [],
     },
@@ -36,17 +34,8 @@ STATE = {
 
 
 def log(msg: str) -> None:
-    print(f"[GS_CHECKPOINT] {msg}")
+    print(f"[GS_OBJMASK] {msg}")
     STATE["report"]["events"].append(msg)
-
-
-def pick_engine(scene) -> None:
-    engine_prop = scene.render.bl_rna.properties.get("engine")
-    ids = {item.identifier for item in engine_prop.enum_items}
-    if "BLENDER_EEVEE_NEXT" in ids:
-        scene.render.engine = "BLENDER_EEVEE_NEXT"
-    elif "BLENDER_EEVEE" in ids:
-        scene.render.engine = "BLENDER_EEVEE"
 
 
 def register_addon() -> None:
@@ -81,7 +70,6 @@ def setup_scene() -> None:
     cube.select_set(True)
     bpy.context.view_layer.objects.active = cube
 
-    pick_engine(scene)
     scene.render.resolution_x = 512
     scene.render.resolution_y = 512
     scene.render.image_settings.file_format = "PNG"
@@ -92,17 +80,18 @@ def setup_scene() -> None:
 def configure() -> None:
     settings = bpy.context.scene.gs_capture_settings
     settings.output_path = str(OUT_DIR)
-    settings.camera_count = 6
-    settings.render_speed_preset = "FAST"
+    settings.camera_count = 8
+    settings.render_speed_preset = "QUALITY"  # Force Cycles for pass support.
     settings.use_adaptive_capture = False
     settings.export_colmap = False
     settings.export_transforms_json = False
     settings.export_depth = False
     settings.export_normals = False
-    settings.export_masks = False
-    settings.enable_checkpoints = True
-    settings.checkpoint_interval = 1
-    settings.auto_resume = True
+    settings.export_masks = True
+    settings.mask_source = "OBJECT_INDEX"
+    settings.mask_format = "STANDARD"
+    settings.enable_checkpoints = False
+    settings.auto_resume = False
     settings.cancel_requested = False
 
 
@@ -121,8 +110,8 @@ def write_and_quit() -> None:
 
 def tick():
     try:
-        if time.time() - STATE["start_time"] > 600:
-            raise TimeoutError("Checkpoint smoke timed out")
+        if time.time() - STATE["start_time"] > 900:
+            raise TimeoutError("Object-index smoke timed out")
 
         if STATE["phase"] == "init":
             shutil.rmtree(OUT_DIR, ignore_errors=True)
@@ -130,43 +119,23 @@ def tick():
             setup_scene()
             configure()
             if not start_capture():
-                raise RuntimeError("Initial capture failed to start")
-            STATE["phase"] = "running_initial"
+                raise RuntimeError("Object-index capture failed to start")
+            STATE["phase"] = "running"
             return 0.2
 
         settings = bpy.context.scene.gs_capture_settings
-
-        if STATE["phase"] == "running_initial":
-            if settings.is_rendering:
-                if not STATE["cancel_sent"] and settings.capture_current >= 2:
-                    bpy.ops.gs_capture.cancel_capture()
-                    STATE["cancel_sent"] = True
-                    log("Cancel requested")
-                return 0.2
-
-            checkpoint_path = OUT_DIR / ".gs_capture_checkpoint.json"
-            STATE["report"]["checkpoint_exists_after_cancel"] = checkpoint_path.exists()
-            if not STATE["cancel_sent"]:
-                raise RuntimeError("Capture finished before cancel was sent")
-            if not start_capture():
-                raise RuntimeError("Resume capture failed to start")
-            STATE["phase"] = "running_resume"
-            return 0.2
-
-        if STATE["phase"] == "running_resume":
+        if STATE["phase"] == "running":
             if settings.is_rendering:
                 return 0.2
 
-            checkpoint_path = OUT_DIR / ".gs_capture_checkpoint.json"
-            images_dir = OUT_DIR / "images"
-            images = list(images_dir.glob("image_*.png")) if images_dir.exists() else []
-            STATE["report"]["checkpoint_exists_after_resume"] = checkpoint_path.exists()
+            images = list((OUT_DIR / "images").glob("image_*.png")) if (OUT_DIR / "images").exists() else []
+            masks = []
+            if (OUT_DIR / "masks").exists():
+                masks.extend((OUT_DIR / "masks").glob("mask_*.png"))
+                masks.extend((OUT_DIR / "masks").glob("mask_*.exr"))
             STATE["report"]["images_count"] = len(images)
-            STATE["report"]["success"] = (
-                STATE["report"]["checkpoint_exists_after_cancel"]
-                and (not STATE["report"]["checkpoint_exists_after_resume"])
-                and len(images) >= 6
-            )
+            STATE["report"]["masks_count"] = len(masks)
+            STATE["report"]["success"] = len(images) > 0 and len(masks) == len(images)
             write_and_quit()
             return None
 
@@ -182,4 +151,3 @@ def tick():
 
 if __name__ == "__main__":
     bpy.app.timers.register(tick, first_interval=0.5)
-

@@ -3,8 +3,8 @@
 Package the GS Capture addon as a Blender-installable zip.
 
 Usage:
-  python scripts/package_addon.py
-  python scripts/package_addon.py --out dist/gs_capture_addon-2.2.1.zip
+  python tools/package_addon.py
+  python tools/package_addon.py --out dist/gs_capture_addon-2.2.1.zip
 """
 
 from __future__ import annotations

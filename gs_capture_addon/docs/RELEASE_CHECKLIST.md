@@ -28,7 +28,7 @@ This checklist is for preparing a public release of the GS Capture addon.
 
 **Packaging**
 1. Ensure the addon package includes `gs_capture_addon/` and `gs_capture_addon.py` shim.
-2. Build the zip with `python scripts/package_addon.py`.
+2. Build the zip with `python tools/package_addon.py`.
 3. Exclude large training repos or sample data from the release zip.
 4. Verify the zip installs in Blender without errors.
 

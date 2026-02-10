@@ -23,7 +23,7 @@ jobs:
 
       - name: Build addon zip
         run: |
-          python scripts/package_addon.py
+          python tools/package_addon.py
           ls -lh dist/
 
       - name: Upload release artifact
@@ -39,4 +39,3 @@ jobs:
         with:
           files: dist/*.zip
           generate_release_notes: true
-

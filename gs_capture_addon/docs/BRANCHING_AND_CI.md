@@ -27,13 +27,13 @@ It runs on push/PR to `main` and `release/**`:
 
 1. Python sanity checks:
 - compile all addon Python files
-- package addon zip (`scripts/package_addon.py`)
+- package addon zip (`tools/package_addon.py`)
 
 2. Blender smoke tests on Windows (Blender 4.5.1):
-- `scripts/smoke_release_verification.py`
-- `scripts/smoke_checkpoint_resume_only.py`
-- `scripts/smoke_object_index_mask.py`
-- report validation with `scripts/verify_ci_smoke_reports.py`
+- `tests/smoke/smoke_release_verification.py`
+- `tests/smoke/smoke_checkpoint_resume_only.py`
+- `tests/smoke/smoke_object_index_mask.py`
+- report validation with `tests/smoke/verify_ci_smoke_reports.py`
 
 Artifacts:
 - packaged zip
@@ -62,4 +62,3 @@ Set branch protection on `release/4.5-lts` and `main`:
 
 2. Require pull request reviews.
 3. Restrict direct pushes.
-

@@ -20,7 +20,7 @@ from pathlib import Path
 import bpy
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 OUT_ROOT = ROOT / "training_out" / "smoke_feature_verification"
 REPORT_PATH = OUT_ROOT / "smoke_report.json"
 

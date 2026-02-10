@@ -9,7 +9,7 @@ Blender Synthetic Data Capture is a Blender addon for capturing synthetic traini
 
 ## Install
 
-1. Download the addon zip from Releases (or build with `python3 scripts/package_addon.py`).
+1. Download the addon zip from Releases (or build with `python3 tools/package_addon.py`).
 2. In Blender open `Edit -> Preferences -> Add-ons`.
 3. Click `Install...` and select the zip.
 4. Enable `Blender Synthetic Data Capture`.
