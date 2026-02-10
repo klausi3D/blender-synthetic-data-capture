@@ -24,6 +24,8 @@ nav:
   - Quick Start: quickstart.md
   - Capture And Exports: capture-and-exports.md
   - Training Backends: training-backends.md
+  - Training Setup (CLI): guides/training-setup.md
+  - Pipeline Setup (CLI): guides/pipeline-setup.md
   - Troubleshooting: troubleshooting.md
   - Release Notes: release-notes.md
   - More Guides: more-guides.md

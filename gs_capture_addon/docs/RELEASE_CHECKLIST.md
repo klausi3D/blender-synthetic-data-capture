@@ -17,7 +17,7 @@ This checklist is for preparing a public release of the GS Capture addon.
 
 **Documentation**
 1. Update `gs_capture_addon/docs/USER_GUIDE.md` with current behavior and outputs.
-2. Update `TRAINING_SETUP.md` and `GS_PIPELINE_SETUP.md` if scripts changed.
+2. Update `docs/guides/training-setup.md` and `docs/guides/pipeline-setup.md` if scripts changed.
 3. Update `CHANGELOG.md` with the release summary and date.
 4. Ensure version and feature list match the release.
 
