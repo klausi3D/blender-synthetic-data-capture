@@ -25,6 +25,11 @@ from ..core.export import (
     cleanup_compositor_nodes,
     extract_alpha_mask,
     get_image_extension,
+    get_compositor_tree,
+    get_or_create_render_layers_node,
+    find_socket_by_names,
+    configure_output_file_node,
+    set_output_file_basename,
 )
 from ..core.validation import validate_all, ValidationLevel
 from ..preferences import get_preferences
@@ -211,6 +216,8 @@ class GSCAPTURE_OT_capture_selected(Operator):
         return True
 
     def _validate_output_paths(self, settings, image_ext):
+        depth_ext = self._depth_output_extension()
+        object_mask_ext = self._object_index_mask_extension()
         paths = [
             ("Output directory", self._output_path),
             ("Images directory", self._images_path),
@@ -227,7 +234,7 @@ class GSCAPTURE_OT_capture_selected(Operator):
         paths.append(("Image file", os.path.join(self._images_path, f"image_0000.{image_ext}")))
 
         if settings.export_depth:
-            paths.append(("Depth file", os.path.join(self._depth_path, "depth_0000.png")))
+            paths.append(("Depth file", os.path.join(self._depth_path, f"depth_0000.{depth_ext}")))
         if settings.export_normals:
             paths.append(("Normal file", os.path.join(self._normals_path, "normal_0000.exr")))
         if settings.export_masks:
@@ -237,7 +244,7 @@ class GSCAPTURE_OT_capture_selected(Operator):
                 else:
                     mask_name = "mask_0000.png"
             else:
-                mask_name = "mask_0000.png"
+                mask_name = f"mask_0000.{object_mask_ext}"
             paths.append(("Mask file", os.path.join(self._masks_path, mask_name)))
 
         for label, path in paths:
@@ -251,32 +258,24 @@ class GSCAPTURE_OT_capture_selected(Operator):
 
         return True
 
+    def _depth_output_extension(self):
+        # Blender 5.x compositor file outputs currently emit EXR for value outputs.
+        return "exr" if bpy.app.version >= (5, 0, 0) else "png"
+
+    def _object_index_mask_extension(self):
+        # Blender 5.x compositor file outputs currently emit EXR for value outputs.
+        return "exr" if bpy.app.version >= (5, 0, 0) else "png"
+
     def _setup_compositor_outputs(self, context, settings):
         """Setup compositor nodes for depth, normal, and mask outputs."""
         scene = context.scene
-        scene.use_nodes = True
-
-        # In Blender 5.0+, node_tree may not exist immediately
-        # Force update by accessing through view_layer
-        if not hasattr(scene, 'node_tree') or scene.node_tree is None:
-            # Trigger node tree creation by toggling use_nodes
-            scene.use_nodes = False
-            scene.use_nodes = True
-
-        tree = scene.node_tree
+        tree = get_compositor_tree(scene, create=True)
         if tree is None:
             self.report({'WARNING'}, "Could not create compositor node tree")
             return
 
         # Get or create render layers node
-        render_layers = None
-        for node in tree.nodes:
-            if node.type == 'R_LAYERS':
-                render_layers = node
-                break
-        if not render_layers:
-            render_layers = tree.nodes.new('CompositorNodeRLayers')
-            render_layers.location = (0, 0)
+        render_layers = get_or_create_render_layers_node(tree)
 
         # Enable required passes
         view_layer = context.view_layer
@@ -298,6 +297,11 @@ class GSCAPTURE_OT_capture_selected(Operator):
 
     def _setup_depth_output(self, tree, render_layers):
         """Setup depth map output node."""
+        depth_socket = find_socket_by_names(render_layers.outputs, {"depth", "z"})
+        if depth_socket is None:
+            self.report({'WARNING'}, "Depth pass output not found; skipping depth export")
+            return
+
         # Normalize node
         normalize = tree.nodes.new('CompositorNodeNormalize')
         normalize.name = "GS_Depth_Normalize"
@@ -307,29 +311,56 @@ class GSCAPTURE_OT_capture_selected(Operator):
         file_output = tree.nodes.new('CompositorNodeOutputFile')
         file_output.name = "GS_Depth_Output"
         file_output.location = (500, -100)
-        file_output.base_path = os.path.join(self._output_path, "depth")
-        file_output.format.file_format = 'PNG'
-        file_output.format.color_mode = 'BW'
-        file_output.format.color_depth = '16'
+        depth_ext = self._depth_output_extension()
+        depth_format = 'OPEN_EXR' if depth_ext == 'exr' else 'PNG'
+        depth_color_mode = None if depth_ext == 'exr' else 'BW'
+        depth_color_depth = None if depth_ext == 'exr' else '16'
+        output_socket = configure_output_file_node(
+            file_output,
+            os.path.join(self._output_path, "depth"),
+            "depth_0000",
+            file_format=depth_format,
+            color_mode=depth_color_mode,
+            color_depth=depth_color_depth,
+            slot_name='Depth',
+            socket_type='FLOAT',
+        )
+        if output_socket is None:
+            self.report({'WARNING'}, "Could not configure depth file output node")
+            return
 
         # Connect
-        tree.links.new(render_layers.outputs['Depth'], normalize.inputs[0])
-        tree.links.new(normalize.outputs[0], file_output.inputs[0])
+        tree.links.new(depth_socket, normalize.inputs[0])
+        tree.links.new(normalize.outputs[0], output_socket)
 
         self._depth_output_node = file_output
 
     def _setup_normal_output(self, tree, render_layers):
         """Setup normal map output node."""
+        normal_socket = find_socket_by_names(render_layers.outputs, {"normal"})
+        if normal_socket is None:
+            self.report({'WARNING'}, "Normal pass output not found; skipping normal export")
+            return
+
         # File output for normals
         file_output = tree.nodes.new('CompositorNodeOutputFile')
         file_output.name = "GS_Normal_Output"
         file_output.location = (500, -250)
-        file_output.base_path = os.path.join(self._output_path, "normals")
-        file_output.format.file_format = 'OPEN_EXR'
-        file_output.format.color_mode = 'RGB'
+        output_socket = configure_output_file_node(
+            file_output,
+            os.path.join(self._output_path, "normals"),
+            "normal_0000",
+            file_format='OPEN_EXR',
+            color_mode='RGB',
+            slot_name='Normal',
+            socket_type='VECTOR',
+        )
+        if output_socket is None:
+            self.report({'WARNING'}, "Could not configure normal file output node")
+            return
 
         # Connect normal output
-        tree.links.new(render_layers.outputs['Normal'], file_output.inputs[0])
+        tree.links.new(normal_socket, output_socket)
 
         self._normal_output_node = file_output
 
@@ -345,14 +376,36 @@ class GSCAPTURE_OT_capture_selected(Operator):
             return
 
         # Create ID Mask nodes for each object index
+        index_output = None
+        wanted = {'indexob', 'object index'}
+        for socket in render_layers.outputs:
+            socket_name = str(getattr(socket, 'name', '')).lower()
+            socket_id = str(getattr(socket, 'identifier', '')).lower()
+            if socket_name in wanted or socket_id in wanted:
+                index_output = socket
+                break
+        if index_output is None:
+            self.report({'WARNING'}, "Object Index pass output not found; skipping object-index masks")
+            return
+
         id_masks = []
         for i in range(num_objects):
             id_mask = tree.nodes.new('CompositorNodeIDMask')
             id_mask.name = f"GS_ID_Mask_{i}"
             id_mask.location = (300, -400 - i * 100)
-            id_mask.index = i + 1  # Object indices start at 1
-            id_mask.use_antialiasing = True
-            tree.links.new(render_layers.outputs['IndexOB'], id_mask.inputs[0])
+            # Blender 4.x uses node properties; Blender 5.x uses input sockets.
+            if hasattr(id_mask, 'index'):
+                id_mask.index = i + 1  # Object indices start at 1
+                if hasattr(id_mask, 'use_antialiasing'):
+                    id_mask.use_antialiasing = True
+            else:
+                index_input = find_socket_by_names(id_mask.inputs, {"index"})
+                if index_input is not None and hasattr(index_input, 'default_value'):
+                    index_input.default_value = i + 1
+                aa_input = find_socket_by_names(id_mask.inputs, {"anti-alias", "anti alias", "anti_alias"})
+                if aa_input is not None and hasattr(aa_input, 'default_value'):
+                    aa_input.default_value = True
+            tree.links.new(index_output, id_mask.inputs[0])
             id_masks.append(id_mask)
 
         # Combine masks using Maximum math nodes
@@ -375,25 +428,37 @@ class GSCAPTURE_OT_capture_selected(Operator):
         file_output = tree.nodes.new('CompositorNodeOutputFile')
         file_output.name = "GS_Mask_Output"
         file_output.location = (700, -400)
-        file_output.base_path = os.path.join(self._output_path, "masks")
-        file_output.format.file_format = 'PNG'
-        file_output.format.color_mode = 'BW'
+        mask_ext = self._object_index_mask_extension()
+        mask_format = 'OPEN_EXR' if mask_ext == 'exr' else 'PNG'
+        mask_color_mode = None if mask_ext == 'exr' else 'BW'
+        output_socket = configure_output_file_node(
+            file_output,
+            os.path.join(self._output_path, "masks"),
+            "mask_0000",
+            file_format=mask_format,
+            color_mode=mask_color_mode,
+            slot_name='Mask',
+            socket_type='FLOAT',
+        )
+        if output_socket is None:
+            self.report({'WARNING'}, "Could not configure mask file output node")
+            return
 
         # Connect combined mask to output
-        tree.links.new(combined_output, file_output.inputs[0])
+        tree.links.new(combined_output, output_socket)
 
         self._mask_output_node = file_output
 
     def _update_output_filenames(self, index):
         """Update compositor output node filenames for current frame."""
         if self._depth_output_node:
-            self._depth_output_node.file_slots[0].path = f"depth_{index:04d}"
+            set_output_file_basename(self._depth_output_node, f"depth_{index:04d}")
 
         if self._normal_output_node:
-            self._normal_output_node.file_slots[0].path = f"normal_{index:04d}"
+            set_output_file_basename(self._normal_output_node, f"normal_{index:04d}")
 
         if self._mask_output_node:
-            self._mask_output_node.file_slots[0].path = f"mask_{index:04d}"
+            set_output_file_basename(self._mask_output_node, f"mask_{index:04d}")
 
     def _verify_output_file(self, directory, prefix, ext):
         """Check for a non-empty output file written by compositor or export."""
@@ -884,10 +949,11 @@ class GSCAPTURE_OT_capture_selected(Operator):
 
                 # Verify additional outputs written by compositor (depth/normals/masks)
                 if save_success and settings.export_depth:
+                    depth_ext = self._depth_output_extension()
                     depth_ok = self._verify_output_file(
                         self._depth_path,
                         f"depth_{actual_index:04d}",
-                        "png"
+                        depth_ext
                     )
                     if not depth_ok:
                         save_success = False
@@ -906,10 +972,11 @@ class GSCAPTURE_OT_capture_selected(Operator):
                         self.report({'ERROR'}, f"Normal map {actual_index} may not have saved correctly")
 
                 if save_success and settings.export_masks and settings.mask_source == 'OBJECT_INDEX':
+                    mask_ext = self._object_index_mask_extension()
                     mask_ok = self._verify_output_file(
                         self._masks_path,
                         f"mask_{actual_index:04d}",
-                        "png"
+                        mask_ext
                     )
                     if not mask_ok:
                         save_success = False
@@ -988,6 +1055,11 @@ class GSCAPTURE_OT_capture_selected(Operator):
                     export_failures.append(f"COLMAP export failed: {e}")
 
         if settings.export_transforms_json:
+            depth_ext = self._depth_output_extension()
+            if settings.export_masks and settings.mask_source == 'OBJECT_INDEX':
+                mask_ext = self._object_index_mask_extension()
+            else:
+                mask_ext = 'png'
             try:
                 export_transforms_json(
                     self._cameras, self._output_path,
@@ -995,8 +1067,8 @@ class GSCAPTURE_OT_capture_selected(Operator):
                     include_depth=settings.export_depth,
                     include_masks=settings.export_masks,
                     image_ext=image_ext,
-                    depth_ext='png',
-                    mask_ext='png',
+                    depth_ext=depth_ext,
+                    mask_ext=mask_ext,
                     mask_format=settings.mask_format
                 )
             except Exception as e:

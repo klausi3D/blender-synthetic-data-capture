@@ -92,7 +92,6 @@ To install 3D Gaussian Splatting:
                 os.path.expanduser("~/code/gaussian-splatting"),
                 "C:/gaussian-splatting",
                 "D:/gaussian-splatting",
-                "C:/Projects/gaussian-splatting",
             ]
         else:
             search_paths = [
