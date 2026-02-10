@@ -1,6 +1,6 @@
 """
 Extract Geometry Node tree structure from a blend file.
-Run this with Blender: blender --background --python extract_nodes.py
+Run this with Blender: blender --background --python tools/extract_nodes.py
 """
 
 import bpy

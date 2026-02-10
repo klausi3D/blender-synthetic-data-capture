@@ -2,8 +2,8 @@
 
 This repository includes two CLI scripts for training outside Blender:
 
-1. `train_gs_simple.py` - simple training for one folder or batch folders
-2. `gs_training_pipeline.py` - pipeline with optional COLMAP and batching
+1. `tools/train_gs_simple.py` - simple training for one folder or batch folders
+2. `tools/gs_training_pipeline.py` - pipeline with optional COLMAP and batching
 
 ---
 
@@ -13,10 +13,10 @@ If you exported `transforms.json`, you can train directly without COLMAP.
 
 ```bash
 # Single capture
-python train_gs_simple.py ./gs_capture/MyObject
+python tools/train_gs_simple.py ./gs_capture/MyObject
 
 # Batch process all capture folders
-python train_gs_simple.py ./gs_capture --batch --output ./trained_models
+python tools/train_gs_simple.py ./gs_capture --batch --output ./trained_models
 ```
 
 ---
@@ -44,41 +44,41 @@ Run training from that environment:
 
 ```bash
 conda activate gaussian_splatting
-python /path/to/GS_Blender/train_gs_simple.py /path/to/capture
+python /path/to/GS_Blender/tools/train_gs_simple.py /path/to/capture
 ```
 
 You can also set a repo path:
 
 ```bash
-python train_gs_simple.py ./gs_capture/MyObject --gs-path /path/to/gaussian-splatting
+python tools/train_gs_simple.py ./gs_capture/MyObject --gs-path /path/to/gaussian-splatting
 ```
 
 ---
 
 ## Option B - Nerfstudio (splatfacto)
 
-`train_gs_simple.py` supports Nerfstudio with the `--nerfstudio` flag:
+`tools/train_gs_simple.py` supports Nerfstudio with the `--nerfstudio` flag:
 
 ```bash
 pip install nerfstudio
-python train_gs_simple.py ./gs_capture/MyObject --nerfstudio
+python tools/train_gs_simple.py ./gs_capture/MyObject --nerfstudio
 ```
 
 ---
 
 ## Using the Pipeline Script
 
-`gs_training_pipeline.py` is for larger batches and optional COLMAP processing.
+`tools/gs_training_pipeline.py` is for larger batches and optional COLMAP processing.
 
 ```bash
 # Process folders with default settings
-python gs_training_pipeline.py --input ./captures --output ./trained
+python tools/gs_training_pipeline.py --input ./captures --output ./trained
 
 # Skip COLMAP (recommended for Blender output)
-python gs_training_pipeline.py --input ./captures --output ./trained --skip-colmap
+python tools/gs_training_pipeline.py --input ./captures --output ./trained --skip-colmap
 
 # Recursive scan
-python gs_training_pipeline.py --input ./captures --output ./trained --recursive
+python tools/gs_training_pipeline.py --input ./captures --output ./trained --recursive
 ```
 
 You can also use a YAML config:
@@ -101,7 +101,7 @@ training:
 ```
 
 ```bash
-python gs_training_pipeline.py --config pipeline_config.yaml
+python tools/gs_training_pipeline.py --config pipeline_config.yaml
 ```
 
 Note: `implementation: "gsplat"` is not implemented in the pipeline script and will log a warning.

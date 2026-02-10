@@ -284,13 +284,13 @@ class GSCapturePreferences(AddonPreferences):
             "wm.url_open",
             text="Documentation",
             icon='URL'
-        ).url = "https://github.com/klausi3D/GS-Capture-Pro"
+        ).url = "https://github.com/klausi3D/blender-synthetic-data-capture"
 
         row.operator(
             "wm.url_open",
             text="Report Issue",
             icon='ERROR'
-        ).url = "https://github.com/klausi3D/GS-Capture-Pro/issues"
+        ).url = "https://github.com/klausi3D/blender-synthetic-data-capture/issues"
 
     def _draw_path_status(self, row, path, check_file):
         """Draw path validation status."""

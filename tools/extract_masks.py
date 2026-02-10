@@ -7,8 +7,8 @@ For images with transparent background (alpha channel), this script:
 2. Creates a white background version for training (optional)
 
 Usage:
-    python extract_masks.py /path/to/capture/images
-    python extract_masks.py /path/to/capture --create-white-bg
+    python tools/extract_masks.py /path/to/capture/images
+    python tools/extract_masks.py /path/to/capture --create-white-bg
 """
 
 import os
@@ -101,13 +101,13 @@ def main():
         epilog="""
 Examples:
   # Extract masks from capture folder
-  python extract_masks.py ./capture
+  python tools/extract_masks.py ./capture
 
   # Also create white background versions
-  python extract_masks.py ./capture --create-white-bg
+  python tools/extract_masks.py ./capture --create-white-bg
 
   # Specify custom output folders
-  python extract_masks.py ./capture/images --masks-folder ./capture/masks
+  python tools/extract_masks.py ./capture/images --masks-folder ./capture/masks
 """
     )
 
