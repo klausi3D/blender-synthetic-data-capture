@@ -63,7 +63,7 @@ def save_checkpoint(output_path, checkpoint_data):
         if os.path.exists(temp_path):
             try:
                 os.remove(temp_path)
-            except:
+            except OSError:
                 pass
         return False, error_message
 

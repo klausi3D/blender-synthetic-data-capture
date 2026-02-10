@@ -97,7 +97,6 @@ MASK SUPPORT:
                 os.path.expanduser("~/gaussian-splatting-lightning"),
                 os.path.expanduser("~/repos/gaussian-splatting-lightning"),
                 "C:/gaussian-splatting-lightning",
-                "C:/Projects/gaussian-splatting-lightning",
                 "D:/gaussian-splatting-lightning",
             ]
         else:

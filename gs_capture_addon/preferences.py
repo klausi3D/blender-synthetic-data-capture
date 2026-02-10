@@ -31,7 +31,7 @@ class GSCapturePreferences(AddonPreferences):
     gaussian_splatting_path: StringProperty(
         name="3DGS Path",
         description="Path to 3D Gaussian Splatting repository (contains train.py)",
-        default="C:/Projects/gaussian-splatting/",
+        default="",
         subtype='DIR_PATH'
     )
 
@@ -50,7 +50,7 @@ class GSCapturePreferences(AddonPreferences):
     gs_lightning_path: StringProperty(
         name="GS-Lightning Path",
         description="Path to gaussian-splatting-lightning repository (contains main.py)",
-        default="C:/Projects/gaussian-splatting-lightning/",
+        default="",
         subtype='DIR_PATH'
     )
 
