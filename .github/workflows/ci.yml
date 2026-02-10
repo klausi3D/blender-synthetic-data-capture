@@ -1,0 +1,111 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - "release/**"
+  pull_request:
+    branches:
+      - main
+      - "release/**"
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python-sanity:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Compile addon Python
+        run: |
+          python - <<'PY'
+          import os
+          for dp, _, files in os.walk("gs_capture_addon"):
+              for f in files:
+                  if f.endswith(".py"):
+                      p = os.path.join(dp, f)
+                      with open(p, "r", encoding="utf-8") as fh:
+                          compile(fh.read(), p, "exec")
+          print("OK: addon python compile")
+          PY
+
+      - name: Package addon
+        run: |
+          python scripts/package_addon.py
+          ls -lh dist/
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: addon-zip
+          path: dist/*.zip
+          if-no-files-found: error
+
+  blender-smoke-windows-4-5:
+    runs-on: windows-latest
+    needs: python-sanity
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Blender 4.5.1
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = "4.5.1"
+          $url = "https://download.blender.org/release/Blender4.5/blender-$version-windows-x64.zip"
+          $zipPath = Join-Path $env:RUNNER_TEMP "blender-$version.zip"
+          $extractDir = Join-Path $env:RUNNER_TEMP "blender-$version"
+          Invoke-WebRequest -Uri $url -OutFile $zipPath
+          Expand-Archive -Path $zipPath -DestinationPath $extractDir
+          $blenderExe = Get-ChildItem -Path $extractDir -Recurse -Filter blender.exe | Select-Object -First 1
+          if (-not $blenderExe) { throw "blender.exe not found after extraction" }
+          "BLENDER_EXE=$($blenderExe.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Run release smoke verification
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          & "$env:BLENDER_EXE" --factory-startup --python (Join-Path $pwd "scripts/smoke_release_verification.py")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run checkpoint-only smoke
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          & "$env:BLENDER_EXE" --factory-startup --python (Join-Path $pwd "scripts/smoke_checkpoint_resume_only.py")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run object-index mask smoke
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          & "$env:BLENDER_EXE" --factory-startup --python (Join-Path $pwd "scripts/smoke_object_index_mask.py")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify smoke reports
+        run: python scripts/verify_ci_smoke_reports.py
+
+      - name: Upload smoke reports and outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: blender-smoke-4-5
+          path: training_out/smoke_feature_verification
+          if-no-files-found: error
+
