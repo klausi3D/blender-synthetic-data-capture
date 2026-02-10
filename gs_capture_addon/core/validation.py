@@ -188,7 +188,7 @@ class SceneValidator:
             )
 
         # Check for non-manifold geometry
-        if mesh.has_loose_vertices:
+        if hasattr(mesh, "has_loose_vertices") and mesh.has_loose_vertices:
             result.add_warning(
                 "scene",
                 f"'{obj.name}' has loose vertices",

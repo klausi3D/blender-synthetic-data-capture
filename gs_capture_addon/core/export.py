@@ -34,6 +34,155 @@ def _ensure_path_length(filepath, description="file"):
         raise IOError(f"{description} path is too long for Windows. {error}")
 
 
+def get_compositor_tree(scene, create=False):
+    """Get compositor node tree for both Blender 4.x and 5.x APIs."""
+    if create and hasattr(scene, 'use_nodes'):
+        try:
+            scene.use_nodes = True
+        except Exception:
+            pass
+
+    # Blender 4.x path.
+    tree = getattr(scene, 'node_tree', None)
+    if tree is not None:
+        return tree
+
+    # Blender 5.x path.
+    if hasattr(scene, 'compositing_node_group'):
+        tree = scene.compositing_node_group
+        if tree is None and create:
+            tree = bpy.data.node_groups.new("GS_Compositor_NodeTree", "CompositorNodeTree")
+            scene.compositing_node_group = tree
+        return tree
+
+    return None
+
+
+def get_or_create_render_layers_node(tree):
+    """Get the compositor Render Layers node, creating it if missing."""
+    for node in tree.nodes:
+        if node.type == 'R_LAYERS':
+            return node
+    node = tree.nodes.new('CompositorNodeRLayers')
+    node.location = (0, 0)
+    return node
+
+
+def find_socket_by_names(sockets, names):
+    """Find a node socket by matching either socket name or identifier."""
+    wanted = {str(name).lower() for name in names}
+    for socket in sockets:
+        socket_name = str(getattr(socket, 'name', '')).lower()
+        socket_id = str(getattr(socket, 'identifier', '')).lower()
+        if socket_name in wanted or socket_id in wanted:
+            return socket
+    return None
+
+
+def _first_non_custom_input(node):
+    for socket in node.inputs:
+        if getattr(socket, 'type', None) != 'CUSTOM':
+            return socket
+    if node.inputs:
+        return node.inputs[0]
+    return None
+
+
+def configure_output_file_node(
+    node,
+    output_dir,
+    basename,
+    file_format,
+    color_mode=None,
+    color_depth=None,
+    slot_name="Image",
+    socket_type="RGBA",
+):
+    """Configure a compositor file output node across Blender versions.
+
+    Returns:
+        input socket to connect render/compositor data into.
+    """
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Blender 4.x API.
+    if hasattr(node, 'base_path') and hasattr(node, 'file_slots'):
+        node.base_path = output_dir
+        if len(node.file_slots) == 0:
+            node.file_slots.new(slot_name)
+        node.file_slots[0].path = basename
+        node.format.file_format = file_format
+        if color_mode and hasattr(node.format, 'color_mode'):
+            node.format.color_mode = color_mode
+        if color_depth and hasattr(node.format, 'color_depth'):
+            node.format.color_depth = color_depth
+        return _first_non_custom_input(node)
+
+    # Blender 5.x API.
+    if hasattr(node, 'directory'):
+        node.directory = output_dir
+    if hasattr(node, 'file_name'):
+        node.file_name = basename
+
+    item = None
+    if hasattr(node, 'file_output_items'):
+        for candidate in node.file_output_items:
+            if str(getattr(candidate, 'name', '')).lower() == slot_name.lower():
+                item = candidate
+                break
+        if item is None:
+            try:
+                item = node.file_output_items.new(socket_type, slot_name)
+            except Exception:
+                item = node.file_output_items.new('RGBA', slot_name)
+
+    format_target = getattr(node, 'format', None)
+    if item is not None and hasattr(item, 'override_node_format'):
+        try:
+            item.override_node_format = True
+            format_target = item.format
+        except Exception:
+            format_target = getattr(node, 'format', None)
+
+    if format_target is not None and hasattr(format_target, 'file_format'):
+        format_target.file_format = file_format
+        if color_mode and hasattr(format_target, 'color_mode'):
+            format_target.color_mode = color_mode
+        if color_depth and hasattr(format_target, 'color_depth'):
+            format_target.color_depth = color_depth
+
+    input_socket = find_socket_by_names(node.inputs, {slot_name})
+    if input_socket is None:
+        input_socket = _first_non_custom_input(node)
+    return input_socket
+
+
+def set_output_file_basename(node, basename):
+    """Set output filename stem for a compositor file output node."""
+    if hasattr(node, 'file_slots'):
+        if len(node.file_slots) == 0:
+            node.file_slots.new("Image")
+        node.file_slots[0].path = basename
+        return
+    if hasattr(node, 'file_name'):
+        node.file_name = basename
+
+
+def image_has_pixels(image):
+    """Check whether a Blender image has accessible pixel data."""
+    if image is None:
+        return False
+    size = getattr(image, 'size', None)
+    if not size or len(size) < 2:
+        return False
+    if size[0] <= 0 or size[1] <= 0:
+        return False
+    try:
+        return len(image.pixels) > 0
+    except Exception:
+        return True
+
+
 def get_image_extension(file_format: str) -> str:
     """Get file extension for a Blender image format.
 
@@ -395,7 +544,7 @@ def save_depth_map(render_result, output_path, normalize=True, format='PNG'):
     try:
         # Access via compositor
         viewer = bpy.data.images.get('Viewer Node')
-        if viewer and viewer.has_data:
+        if image_has_pixels(viewer):
             # Get pixel data
             width, height = viewer.size
             pixels = np.array(viewer.pixels[:]).reshape(height, width, 4)
@@ -446,11 +595,12 @@ def save_depth_from_z_buffer(context, output_path, camera, near_clip=0.1, far_cl
     scene = context.scene
 
     # Enable compositor and Z pass
-    scene.use_nodes = True
     view_layer = context.view_layer
     view_layer.use_pass_z = True
 
-    tree = scene.node_tree
+    tree = get_compositor_tree(scene, create=True)
+    if tree is None:
+        return False
 
     # Clear existing nodes
     for node in tree.nodes:
@@ -458,14 +608,10 @@ def save_depth_from_z_buffer(context, output_path, camera, near_clip=0.1, far_cl
             tree.nodes.remove(node)
 
     # Get render layers node
-    render_layers = None
-    for node in tree.nodes:
-        if node.type == 'R_LAYERS':
-            render_layers = node
-            break
-
-    if not render_layers:
-        render_layers = tree.nodes.new('CompositorNodeRLayers')
+    render_layers = get_or_create_render_layers_node(tree)
+    depth_socket = find_socket_by_names(render_layers.outputs, {"depth", "z"})
+    if depth_socket is None:
+        return False
 
     # Create normalize node
     normalize = tree.nodes.new('CompositorNodeNormalize')
@@ -474,15 +620,22 @@ def save_depth_from_z_buffer(context, output_path, camera, near_clip=0.1, far_cl
     # Create file output node for depth
     file_output = tree.nodes.new('CompositorNodeOutputFile')
     file_output.name = "GS_Depth_Output"
-    file_output.base_path = os.path.dirname(output_path)
-    file_output.file_slots[0].path = os.path.basename(output_path).replace('.png', '')
-    file_output.format.file_format = 'PNG'
-    file_output.format.color_mode = 'BW'
-    file_output.format.color_depth = '16'
+    output_socket = configure_output_file_node(
+        file_output,
+        os.path.dirname(output_path),
+        os.path.splitext(os.path.basename(output_path))[0],
+        file_format='PNG',
+        color_mode='BW',
+        color_depth='16',
+        slot_name='Depth',
+        socket_type='FLOAT',
+    )
+    if output_socket is None:
+        return False
 
     # Connect nodes
-    tree.links.new(render_layers.outputs['Depth'], normalize.inputs[0])
-    tree.links.new(normalize.outputs[0], file_output.inputs[0])
+    tree.links.new(depth_socket, normalize.inputs[0])
+    tree.links.new(normalize.outputs[0], output_socket)
 
     return True
 
@@ -501,32 +654,34 @@ def save_normal_map(context, output_path):
     scene = context.scene
 
     # Enable normal pass
-    scene.use_nodes = True
     view_layer = context.view_layer
     view_layer.use_pass_normal = True
 
-    tree = scene.node_tree
-
-    # Get render layers node
-    render_layers = None
-    for node in tree.nodes:
-        if node.type == 'R_LAYERS':
-            render_layers = node
-            break
-
-    if not render_layers:
+    tree = get_compositor_tree(scene, create=True)
+    if tree is None:
+        return False
+    render_layers = get_or_create_render_layers_node(tree)
+    normal_socket = find_socket_by_names(render_layers.outputs, {"normal"})
+    if normal_socket is None:
         return False
 
     # Create file output for normals
     file_output = tree.nodes.new('CompositorNodeOutputFile')
     file_output.name = "GS_Normal_Output"
-    file_output.base_path = os.path.dirname(output_path)
-    file_output.file_slots[0].path = os.path.basename(output_path).replace('.png', '')
-    file_output.format.file_format = 'OPEN_EXR'  # EXR for full precision
-    file_output.format.color_mode = 'RGB'
+    output_socket = configure_output_file_node(
+        file_output,
+        os.path.dirname(output_path),
+        os.path.splitext(os.path.basename(output_path))[0],
+        file_format='OPEN_EXR',  # EXR for full precision
+        color_mode='RGB',
+        slot_name='Normal',
+        socket_type='VECTOR',
+    )
+    if output_socket is None:
+        return False
 
     # Connect normal output
-    tree.links.new(render_layers.outputs['Normal'], file_output.inputs[0])
+    tree.links.new(normal_socket, output_socket)
 
     return True
 
@@ -556,30 +711,43 @@ def save_object_mask(context, output_path, target_objects):
         obj.pass_index = i + 1
 
     # Enable object index pass
-    scene.use_nodes = True
     view_layer = context.view_layer
     view_layer.use_pass_object_index = True
 
-    tree = scene.node_tree
-
-    # Get render layers node
-    render_layers = None
-    for node in tree.nodes:
-        if node.type == 'R_LAYERS':
-            render_layers = node
-            break
-
-    if not render_layers:
+    tree = get_compositor_tree(scene, create=True)
+    if tree is None:
         return False
+    render_layers = get_or_create_render_layers_node(tree)
 
     # Create ID Mask nodes for each object index
+    index_output = None
+    wanted = {'indexob', 'object index'}
+    for socket in render_layers.outputs:
+        socket_name = str(getattr(socket, 'name', '')).lower()
+        socket_id = str(getattr(socket, 'identifier', '')).lower()
+        if socket_name in wanted or socket_id in wanted:
+            index_output = socket
+            break
+    if index_output is None:
+        return False
+
     id_masks = []
     for i in range(len(target_objects)):
         id_mask = tree.nodes.new('CompositorNodeIDMask')
         id_mask.name = f"GS_ID_Mask_{i}"
-        id_mask.index = i + 1  # Object indices start at 1
-        id_mask.use_antialiasing = True
-        tree.links.new(render_layers.outputs['IndexOB'], id_mask.inputs[0])
+        # Blender 4.x uses node properties; Blender 5.x uses input sockets.
+        if hasattr(id_mask, 'index'):
+            id_mask.index = i + 1  # Object indices start at 1
+            if hasattr(id_mask, 'use_antialiasing'):
+                id_mask.use_antialiasing = True
+        else:
+            index_input = find_socket_by_names(id_mask.inputs, {"index"})
+            if index_input is not None and hasattr(index_input, 'default_value'):
+                index_input.default_value = i + 1
+            aa_input = find_socket_by_names(id_mask.inputs, {"anti-alias", "anti alias", "anti_alias"})
+            if aa_input is not None and hasattr(aa_input, 'default_value'):
+                aa_input.default_value = True
+        tree.links.new(index_output, id_mask.inputs[0])
         id_masks.append(id_mask)
 
     # Combine masks using Maximum math nodes
@@ -600,13 +768,20 @@ def save_object_mask(context, output_path, target_objects):
     # Create file output for mask
     file_output = tree.nodes.new('CompositorNodeOutputFile')
     file_output.name = "GS_Mask_Output"
-    file_output.base_path = os.path.dirname(output_path)
-    file_output.file_slots[0].path = os.path.basename(output_path).replace('.png', '')
-    file_output.format.file_format = 'PNG'
-    file_output.format.color_mode = 'BW'
+    output_socket = configure_output_file_node(
+        file_output,
+        os.path.dirname(output_path),
+        os.path.splitext(os.path.basename(output_path))[0],
+        file_format='PNG',
+        color_mode='BW',
+        slot_name='Mask',
+        socket_type='FLOAT',
+    )
+    if output_socket is None:
+        return False
 
     # Connect combined mask to output
-    tree.links.new(combined_output, file_output.inputs[0])
+    tree.links.new(combined_output, output_socket)
 
     return True
 
@@ -617,11 +792,7 @@ def cleanup_compositor_nodes(context):
     Args:
         context: Blender context
     """
-    # Safety checks for Blender 5.0+ API changes
-    if not getattr(context.scene, 'use_nodes', False):
-        return
-
-    tree = getattr(context.scene, 'node_tree', None)
+    tree = get_compositor_tree(context.scene, create=False)
     if tree is None:
         return
 
@@ -820,7 +991,7 @@ def save_alpha_mask_from_render(mask_path):
     _ensure_path_length(mask_path, "mask image")
     try:
         render_result = bpy.data.images.get('Render Result')
-        if not render_result or not render_result.has_data:
+        if not image_has_pixels(render_result):
             return False
 
         width, height = render_result.size

@@ -222,9 +222,15 @@ def collect_case1_results() -> None:
     out_dir = Path(STATE["case1_dir"])
     checkpoint_path = out_dir / ".gs_capture_checkpoint.json"
     images = nonempty_files(str(out_dir / "images" / "image_*.png"))
-    depth = nonempty_files(str(out_dir / "depth" / "depth_*.png"))
+    depth = (
+        nonempty_files(str(out_dir / "depth" / "depth_*.png")) +
+        nonempty_files(str(out_dir / "depth" / "depth_*.exr"))
+    )
     normals = nonempty_files(str(out_dir / "normals" / "normal_*.exr"))
-    masks = nonempty_files(str(out_dir / "masks" / "mask_*.png"))
+    masks = (
+        nonempty_files(str(out_dir / "masks" / "mask_*.png")) +
+        nonempty_files(str(out_dir / "masks" / "mask_*.exr"))
+    )
 
     transforms_path = out_dir / "transforms.json"
     transforms_ok = False

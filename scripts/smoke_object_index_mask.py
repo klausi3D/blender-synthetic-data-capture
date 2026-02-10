@@ -129,7 +129,10 @@ def tick():
                 return 0.2
 
             images = list((OUT_DIR / "images").glob("image_*.png")) if (OUT_DIR / "images").exists() else []
-            masks = list((OUT_DIR / "masks").glob("mask_*.png")) if (OUT_DIR / "masks").exists() else []
+            masks = []
+            if (OUT_DIR / "masks").exists():
+                masks.extend((OUT_DIR / "masks").glob("mask_*.png"))
+                masks.extend((OUT_DIR / "masks").glob("mask_*.exr"))
             STATE["report"]["images_count"] = len(images)
             STATE["report"]["masks_count"] = len(masks)
             STATE["report"]["success"] = len(images) > 0 and len(masks) == len(images)
