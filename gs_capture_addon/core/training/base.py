@@ -182,6 +182,20 @@ class TrainingBackend(ABC):
         """
         return None
 
+    def get_model_path(self, output_path: str) -> Optional[str]:
+        """Get path to trained model for downstream import workflows.
+
+        Backends can override this when they have a preferred model file.
+        The default keeps backward compatibility with existing implementations.
+
+        Args:
+            output_path: Training output directory
+
+        Returns:
+            Path to model file or None
+        """
+        return self.get_final_model_path(output_path)
+
     def cleanup(self, output_path: str) -> None:
         """Clean up temporary files after training.
 

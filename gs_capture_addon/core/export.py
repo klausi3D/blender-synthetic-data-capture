@@ -10,6 +10,7 @@ import json
 import random
 import struct
 import zlib
+from bisect import bisect_left
 import numpy as np
 from mathutils import Vector, Matrix
 
@@ -269,7 +270,556 @@ def blender_to_colmap_matrix(blender_matrix):
     return rot, trans
 
 
-def export_colmap_cameras(cameras, output_path, image_width, image_height, image_ext="png"):
+def _write_colmap_cameras_text(output_file, image_width, image_height, intrinsics):
+    """Write COLMAP cameras.txt."""
+    _ensure_path_length(output_file, "COLMAP cameras file")
+    try:
+        with open(output_file, 'w') as f:
+            f.write("# Camera list with one line of data per camera:\n")
+            f.write("#   CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]\n")
+            f.write("# Number of cameras: 1\n")
+            f.write(f"1 PINHOLE {image_width} {image_height} "
+                    f"{intrinsics['fx']:.6f} {intrinsics['fy']:.6f} "
+                    f"{intrinsics['cx']:.6f} {intrinsics['cy']:.6f}\n")
+        _ensure_file_written(output_file, "COLMAP cameras file")
+    except Exception as e:
+        raise IOError(f"Error writing COLMAP cameras file '{output_file}': {e}") from e
+
+
+def _write_colmap_images_text(output_file, image_rows):
+    """Write COLMAP images.txt."""
+    _ensure_path_length(output_file, "COLMAP images file")
+    try:
+        with open(output_file, 'w') as f:
+            f.write("# Image list with two lines of data per image:\n")
+            f.write("#   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME\n")
+            f.write("#   POINTS2D[] as (X, Y, POINT3D_ID)\n")
+            for row in image_rows:
+                rot = row["rotation"]
+                trans = row["translation"]
+                f.write(f"{row['image_id']} {rot.w:.6f} {rot.x:.6f} {rot.y:.6f} {rot.z:.6f} ")
+                f.write(f"{trans.x:.6f} {trans.y:.6f} {trans.z:.6f} 1 {row['name']}\n")
+                # Use single space for points line - prevents removal as "empty"
+                f.write(" \n")
+        _ensure_file_written(output_file, "COLMAP images file")
+    except Exception as e:
+        raise IOError(f"Error writing COLMAP images file '{output_file}': {e}") from e
+
+
+def _write_colmap_points_text(output_file, points):
+    """Write COLMAP points3D.txt."""
+    _ensure_path_length(output_file, "COLMAP points file")
+    try:
+        with open(output_file, 'w') as f:
+            f.write("# 3D point list with one line of data per point:\n")
+            f.write("#   POINT3D_ID, X, Y, Z, R, G, B, ERROR, TRACK[] as (IMAGE_ID, POINT2D_IDX)\n")
+            for i, (px, py, pz, r, g, b) in enumerate(points):
+                f.write(f"{i + 1} {px:.6f} {py:.6f} {pz:.6f} {r} {g} {b} 0.0\n")
+        _ensure_file_written(output_file, "COLMAP points file")
+    except Exception as e:
+        raise IOError(f"Error writing COLMAP points file '{output_file}': {e}") from e
+
+
+def _write_colmap_cameras_binary(output_file, image_width, image_height, intrinsics):
+    """Write COLMAP cameras.bin for PINHOLE camera model."""
+    _ensure_path_length(output_file, "COLMAP cameras binary file")
+    try:
+        with open(output_file, 'wb') as f:
+            # uint64 num_cameras
+            f.write(struct.pack('<Q', 1))
+            # int32 camera_id, int32 model_id (PINHOLE=1), uint64 width, uint64 height, 4x float64 params
+            f.write(struct.pack(
+                '<iiQQdddd',
+                1,
+                1,
+                int(image_width),
+                int(image_height),
+                float(intrinsics['fx']),
+                float(intrinsics['fy']),
+                float(intrinsics['cx']),
+                float(intrinsics['cy']),
+            ))
+        _ensure_file_written(output_file, "COLMAP cameras binary file")
+    except Exception as e:
+        raise IOError(f"Error writing COLMAP cameras binary file '{output_file}': {e}") from e
+
+
+def _write_colmap_images_binary(output_file, image_rows):
+    """Write COLMAP images.bin."""
+    _ensure_path_length(output_file, "COLMAP images binary file")
+    try:
+        with open(output_file, 'wb') as f:
+            # uint64 num_images
+            f.write(struct.pack('<Q', len(image_rows)))
+            for row in image_rows:
+                rot = row["rotation"]
+                trans = row["translation"]
+                name_bytes = row["name"].encode('utf-8') + b'\x00'
+
+                # image_id, qw, qx, qy, qz, tx, ty, tz, camera_id
+                f.write(struct.pack(
+                    '<idddddddi',
+                    int(row["image_id"]),
+                    float(rot.w), float(rot.x), float(rot.y), float(rot.z),
+                    float(trans.x), float(trans.y), float(trans.z),
+                    1,
+                ))
+                f.write(name_bytes)
+
+                # uint64 num_points2D (none for synthetic initialization)
+                f.write(struct.pack('<Q', 0))
+        _ensure_file_written(output_file, "COLMAP images binary file")
+    except Exception as e:
+        raise IOError(f"Error writing COLMAP images binary file '{output_file}': {e}") from e
+
+
+def _write_colmap_points_binary(output_file, points):
+    """Write COLMAP points3D.bin."""
+    _ensure_path_length(output_file, "COLMAP points binary file")
+    try:
+        with open(output_file, 'wb') as f:
+            # uint64 num_points3D
+            f.write(struct.pack('<Q', len(points)))
+            for i, (px, py, pz, r, g, b) in enumerate(points):
+                # uint64 point3D_id, xyz as float64, rgb as uint8, error as float64, track length as uint64
+                f.write(struct.pack(
+                    '<QdddBBBdQ',
+                    i + 1,
+                    float(px), float(py), float(pz),
+                    int(r), int(g), int(b),
+                    0.0,
+                    0,
+                ))
+        _ensure_file_written(output_file, "COLMAP points binary file")
+    except Exception as e:
+        raise IOError(f"Error writing COLMAP points binary file '{output_file}': {e}") from e
+
+
+def _count_non_comment_lines(filepath):
+    """Count lines that are not COLMAP comments."""
+    count = 0
+    with open(filepath, 'r', encoding='utf-8', errors='ignore') as f:
+        for line in f:
+            if line.lstrip().startswith('#'):
+                continue
+            if line == '':
+                continue
+            count += 1
+    return count
+
+
+def _read_binary_count(filepath, description):
+    """Read uint64 entry count at start of COLMAP binary file."""
+    try:
+        with open(filepath, 'rb') as f:
+            header = f.read(8)
+    except OSError as e:
+        raise IOError(f"Could not read {description} '{filepath}': {e}") from e
+    if len(header) != 8:
+        raise IOError(f"{description} has invalid header size: {filepath}")
+    return struct.unpack('<Q', header)[0]
+
+
+def validate_colmap_export(output_path, expected_image_count, expect_binary=False):
+    """Lightweight structural validation for generated COLMAP files."""
+    cameras_txt = os.path.join(output_path, "cameras.txt")
+    images_txt = os.path.join(output_path, "images.txt")
+    points_txt = os.path.join(output_path, "points3D.txt")
+
+    for path, label in (
+        (cameras_txt, "COLMAP cameras file"),
+        (images_txt, "COLMAP images file"),
+        (points_txt, "COLMAP points file"),
+    ):
+        _ensure_file_written(path, label)
+
+    cameras_lines = _count_non_comment_lines(cameras_txt)
+    images_lines = _count_non_comment_lines(images_txt)
+    points_lines = _count_non_comment_lines(points_txt)
+
+    if cameras_lines < 1:
+        return False, "cameras.txt has no camera data lines"
+    if images_lines < expected_image_count * 2 or images_lines % 2 != 0:
+        return False, "images.txt has invalid image row structure"
+    if points_lines < 1:
+        return False, "points3D.txt has no point data lines"
+
+    if expect_binary:
+        cameras_bin = os.path.join(output_path, "cameras.bin")
+        images_bin = os.path.join(output_path, "images.bin")
+        points_bin = os.path.join(output_path, "points3D.bin")
+
+        for path, label in (
+            (cameras_bin, "COLMAP cameras binary file"),
+            (images_bin, "COLMAP images binary file"),
+            (points_bin, "COLMAP points binary file"),
+        ):
+            _ensure_file_written(path, label)
+
+        camera_count = _read_binary_count(cameras_bin, "COLMAP cameras binary file")
+        image_count = _read_binary_count(images_bin, "COLMAP images binary file")
+        point_count = _read_binary_count(points_bin, "COLMAP points binary file")
+
+        if camera_count != 1:
+            return False, "cameras.bin has invalid camera count"
+        if image_count != expected_image_count:
+            return False, "images.bin has invalid image count"
+        if point_count < 1:
+            return False, "points3D.bin has no points"
+
+    return True, None
+
+
+def _normalize_color_rgb(color_value):
+    """Convert color-like values to RGB float tuple in [0, 1]."""
+    if color_value is None:
+        return None
+    try:
+        if len(color_value) < 3:
+            return None
+        r = float(color_value[0])
+        g = float(color_value[1])
+        b = float(color_value[2])
+        return (
+            max(0.0, min(1.0, r)),
+            max(0.0, min(1.0, g)),
+            max(0.0, min(1.0, b)),
+        )
+    except Exception:
+        return None
+
+
+def _rgb_to_u8(rgb):
+    if rgb is None:
+        return None
+    return tuple(int(round(max(0.0, min(1.0, c)) * 255.0)) for c in rgb[:3])
+
+
+def _random_point_color(rng):
+    """Legacy fallback point color distribution."""
+    return (
+        rng.randint(128, 255),
+        rng.randint(128, 255),
+        rng.randint(128, 255),
+    )
+
+
+def _get_material_base_color(material):
+    """Best-effort extraction of a material's base color."""
+    if material is None:
+        return None
+
+    node_tree = getattr(material, 'node_tree', None)
+    if getattr(material, 'use_nodes', False) and node_tree:
+        for node in node_tree.nodes:
+            if node.type == 'BSDF_PRINCIPLED':
+                base_color = node.inputs.get("Base Color")
+                if base_color is not None and hasattr(base_color, 'default_value'):
+                    rgb = _normalize_color_rgb(base_color.default_value)
+                    if rgb is not None:
+                        return rgb
+
+    diffuse = getattr(material, 'diffuse_color', None)
+    return _normalize_color_rgb(diffuse)
+
+
+def _get_active_color_layer(mesh):
+    """Get active mesh color layer for vertex/corner colors."""
+    if hasattr(mesh, 'color_attributes'):
+        color_attributes = mesh.color_attributes
+        if len(color_attributes) > 0:
+            active = getattr(color_attributes, 'active_color', None)
+            return active if active is not None else color_attributes[0]
+
+    if hasattr(mesh, 'vertex_colors'):
+        vertex_colors = mesh.vertex_colors
+        if len(vertex_colors) > 0:
+            active = getattr(vertex_colors, 'active', None)
+            return active if active is not None else vertex_colors[0]
+
+    return None
+
+
+def _sample_color_layer(layer, indices, barycentric):
+    """Sample RGB from mesh color layer using barycentric interpolation."""
+    if layer is None:
+        return None
+
+    data = getattr(layer, 'data', None)
+    if data is None:
+        return None
+
+    sampled = []
+    try:
+        for idx in indices:
+            if idx < 0 or idx >= len(data):
+                return None
+            color = getattr(data[idx], 'color', None)
+            rgb = _normalize_color_rgb(color)
+            if rgb is None:
+                return None
+            sampled.append(rgb)
+    except Exception:
+        return None
+
+    if len(sampled) != 3:
+        return None
+
+    b0, b1, b2 = barycentric
+    return (
+        sampled[0][0] * b0 + sampled[1][0] * b1 + sampled[2][0] * b2,
+        sampled[0][1] * b0 + sampled[1][1] * b1 + sampled[2][1] * b2,
+        sampled[0][2] * b0 + sampled[1][2] * b1 + sampled[2][2] * b2,
+    )
+
+
+def _sample_surface_point_color(entry, tri, barycentric, rng):
+    """Best-effort color sampling for a triangle sample."""
+    color_layer = entry.get("color_layer")
+    if color_layer is not None:
+        domain = str(getattr(color_layer, 'domain', 'CORNER')).upper()
+        if domain == 'POINT':
+            rgb = _sample_color_layer(color_layer, tri.vertices, barycentric)
+        else:
+            rgb = _sample_color_layer(color_layer, tri.loops, barycentric)
+        rgb_u8 = _rgb_to_u8(rgb)
+        if rgb_u8 is not None:
+            return rgb_u8
+
+    # Fallback to material base color
+    material_cache = entry["material_cache"]
+    material = None
+    slots = getattr(entry["object"], 'material_slots', None)
+    material_index = int(getattr(tri, 'material_index', 0))
+    if slots is not None and 0 <= material_index < len(slots):
+        material = slots[material_index].material
+
+    if material is not None:
+        cache_key = getattr(material, 'name_full', getattr(material, 'name', str(id(material))))
+        if cache_key not in material_cache:
+            material_cache[cache_key] = _rgb_to_u8(_get_material_base_color(material))
+        cached_rgb = material_cache.get(cache_key)
+        if cached_rgb is not None:
+            return cached_rgb
+
+    return _random_point_color(rng)
+
+
+def _resolve_sampling_objects(target_objects=None):
+    """Resolve mesh objects used for surface sampling."""
+    if target_objects:
+        return [obj for obj in target_objects if obj and obj.type == 'MESH']
+
+    scene = getattr(bpy.context, 'scene', None)
+    if scene is None:
+        return []
+
+    return [obj for obj in scene.objects if obj.type == 'MESH' and not obj.hide_render]
+
+
+def _sample_points_from_mesh_surfaces(num_points, rng, target_objects=None):
+    """Sample world-space points on mesh triangle surfaces."""
+    source_objects = _resolve_sampling_objects(target_objects)
+    if not source_objects:
+        return [], "No mesh objects available for surface sampling."
+
+    depsgraph = None
+    if hasattr(bpy.context, 'evaluated_depsgraph_get'):
+        try:
+            depsgraph = bpy.context.evaluated_depsgraph_get()
+        except Exception:
+            depsgraph = None
+
+    entries = []
+    object_cumulative = []
+    total_area = 0.0
+
+    try:
+        for obj in source_objects:
+            try:
+                eval_obj = obj.evaluated_get(depsgraph) if depsgraph else obj
+                mesh = eval_obj.to_mesh()
+            except Exception:
+                continue
+
+            if mesh is None:
+                continue
+
+            try:
+                mesh.calc_loop_triangles()
+            except Exception:
+                pass
+
+            triangles = []
+            triangle_cumulative = []
+            triangle_total_area = 0.0
+
+            for tri in mesh.loop_triangles:
+                area = float(getattr(tri, 'area', 0.0))
+                if area <= 1e-12:
+                    continue
+                triangle_total_area += area
+                triangles.append(tri)
+                triangle_cumulative.append(triangle_total_area)
+
+            if triangle_total_area <= 0.0:
+                try:
+                    eval_obj.to_mesh_clear()
+                except Exception:
+                    pass
+                continue
+
+            total_area += triangle_total_area
+            object_cumulative.append(total_area)
+            entries.append({
+                "object": obj,
+                "matrix_world": obj.matrix_world.copy(),
+                "eval_object": eval_obj,
+                "mesh": mesh,
+                "triangles": triangles,
+                "triangle_cumulative": triangle_cumulative,
+                "triangle_total_area": triangle_total_area,
+                "color_layer": _get_active_color_layer(mesh),
+                "material_cache": {},
+            })
+
+        if total_area <= 0.0 or not entries:
+            return [], "Mesh objects found but no triangle surface area available for sampling."
+
+        points = []
+        for _ in range(num_points):
+            object_pick = rng.random() * total_area
+            object_index = bisect_left(object_cumulative, object_pick)
+            if object_index >= len(entries):
+                object_index = len(entries) - 1
+            entry = entries[object_index]
+
+            tri_pick = rng.random() * entry["triangle_total_area"]
+            tri_index = bisect_left(entry["triangle_cumulative"], tri_pick)
+            if tri_index >= len(entry["triangles"]):
+                tri_index = len(entry["triangles"]) - 1
+
+            tri = entry["triangles"][tri_index]
+            v0 = entry["mesh"].vertices[tri.vertices[0]].co
+            v1 = entry["mesh"].vertices[tri.vertices[1]].co
+            v2 = entry["mesh"].vertices[tri.vertices[2]].co
+
+            sqrt_r1 = math.sqrt(rng.random())
+            r2 = rng.random()
+            b0 = 1.0 - sqrt_r1
+            b1 = sqrt_r1 * (1.0 - r2)
+            b2 = sqrt_r1 * r2
+
+            local_point = v0 * b0 + v1 * b1 + v2 * b2
+            world_point = entry["matrix_world"] @ local_point
+            r, g, b = _sample_surface_point_color(entry, tri, (b0, b1, b2), rng)
+            points.append((world_point.x, world_point.y, world_point.z, r, g, b))
+
+        return points, None
+    except Exception as e:
+        return [], f"Surface sampling failed ({e})."
+    finally:
+        for entry in entries:
+            eval_obj = entry.get("eval_object")
+            if eval_obj is None:
+                continue
+            try:
+                eval_obj.to_mesh_clear()
+            except Exception:
+                pass
+
+
+def _generate_random_volume_points(cameras, num_points, rng):
+    """Generate random points in a camera-centered volume (legacy behavior)."""
+    cam_positions = []
+    cam_targets = []
+
+    for cam in cameras:
+        pos = cam.matrix_world.translation
+        cam_positions.append(pos)
+
+        # Camera looks along -Z in local space
+        forward = cam.matrix_world.to_3x3() @ Vector((0, 0, -1))
+        if forward.length_squared > 0:
+            forward.normalize()
+        dist_to_origin = pos.length
+        target = pos + forward * dist_to_origin
+        cam_targets.append(target)
+
+    if not cam_positions:
+        center = Vector((0, 0, 0))
+        radius = 5.0
+    else:
+        cam_center = sum(cam_positions, Vector()) / len(cam_positions)
+        target_center = sum(cam_targets, Vector()) / len(cam_targets)
+        max_cam_dist = max((p - cam_center).length for p in cam_positions)
+        center = target_center
+        radius = max(0.1, max_cam_dist * 0.4)
+
+    points = []
+    for _ in range(num_points):
+        while True:
+            x = rng.uniform(-1, 1)
+            y = rng.uniform(-1, 1)
+            z = rng.uniform(-1, 1)
+            if x * x + y * y + z * z <= 1:
+                break
+
+        px = center.x + x * radius
+        py = center.y + y * radius
+        pz = center.z + z * radius
+        r, g, b = _random_point_color(rng)
+        points.append((px, py, pz, r, g, b))
+
+    return points
+
+
+def _build_initial_points(cameras, num_points=5000, sampling_mode='RANDOM_VOLUME', target_objects=None):
+    """Generate initial points with optional surface-first sampling."""
+    if not cameras:
+        return [], "COLMAP points export skipped: no cameras available."
+
+    try:
+        count = int(num_points)
+    except Exception:
+        count = 5000
+    count = max(1, count)
+
+    mode = str(sampling_mode or 'RANDOM_VOLUME').upper()
+    if mode not in {'RANDOM_VOLUME', 'SURFACE_FALLBACK'}:
+        mode = 'RANDOM_VOLUME'
+
+    rng = random.Random(42)
+    warnings = []
+
+    if mode == 'SURFACE_FALLBACK':
+        surface_points, surface_warning = _sample_points_from_mesh_surfaces(
+            count,
+            rng,
+            target_objects=target_objects,
+        )
+        if surface_points:
+            return surface_points, None
+        if surface_warning:
+            warnings.append(surface_warning)
+        warnings.append("Falling back to random volume COLMAP point initialization.")
+
+    points = _generate_random_volume_points(cameras, count, rng)
+    warning_message = "; ".join(dict.fromkeys(warnings)) if warnings else None
+    return points, warning_message
+
+
+def export_colmap_cameras(
+    cameras,
+    output_path,
+    image_width,
+    image_height,
+    image_ext="png",
+    export_binary=False,
+    initial_point_count=5000,
+    point_sampling_mode='RANDOM_VOLUME',
+    target_objects=None,
+):
     """Export camera parameters in COLMAP format.
 
     Creates cameras.txt, images.txt, and points3D.txt files
@@ -281,6 +831,10 @@ def export_colmap_cameras(cameras, output_path, image_width, image_height, image
         image_width: Image width in pixels
         image_height: Image height in pixels
         image_ext: Image file extension (without dot)
+        export_binary: Whether to additionally export COLMAP binary files
+        initial_point_count: Number of points to initialize in points3D
+        point_sampling_mode: Point generation mode ('RANDOM_VOLUME' or 'SURFACE_FALLBACK')
+        target_objects: Optional mesh objects used for surface sampling
 
     Returns:
         tuple: (success: bool, warning_message: str or None)
@@ -291,60 +845,62 @@ def export_colmap_cameras(cameras, output_path, image_width, image_height, image
     _ensure_path_length(output_path, "COLMAP output directory")
     os.makedirs(output_path, exist_ok=True)
 
-    # cameras.txt - camera intrinsics
+    intrinsics = get_camera_intrinsics(cameras[0], image_width, image_height)
+    image_rows = []
+    for i, cam in enumerate(cameras):
+        rot, trans = blender_to_colmap_matrix(cam.matrix_world)
+        image_rows.append({
+            "image_id": i + 1,
+            "rotation": rot,
+            "translation": trans,
+            "name": f"image_{i:04d}.{image_ext}",
+        })
+
+    # Always export text COLMAP files for backward compatibility.
     cameras_file = os.path.join(output_path, "cameras.txt")
-    try:
-        _ensure_path_length(cameras_file, "COLMAP cameras file")
-        with open(cameras_file, 'w') as f:
-            f.write("# Camera list with one line of data per camera:\n")
-            f.write("#   CAMERA_ID, MODEL, WIDTH, HEIGHT, PARAMS[]\n")
-            f.write(f"# Number of cameras: 1\n")
-
-            # Get intrinsics from first camera (assumes all same)
-            intrinsics = get_camera_intrinsics(cameras[0], image_width, image_height)
-
-            # PINHOLE model: fx, fy, cx, cy
-            f.write(f"1 PINHOLE {image_width} {image_height} "
-                    f"{intrinsics['fx']:.6f} {intrinsics['fy']:.6f} "
-                    f"{intrinsics['cx']:.6f} {intrinsics['cy']:.6f}\n")
-        _ensure_file_written(cameras_file, "COLMAP cameras file")
-    except Exception as e:
-        raise IOError(f"Error writing COLMAP cameras file '{cameras_file}': {e}") from e
-
-    # images.txt - camera extrinsics
-    # Note: LichtFeld Studio requires even number of non-comment lines
-    # Each image needs: pose line + points line
     images_file = os.path.join(output_path, "images.txt")
-    try:
-        _ensure_path_length(images_file, "COLMAP images file")
-        with open(images_file, 'w') as f:
-            f.write("# Image list with two lines of data per image:\n")
-            f.write("#   IMAGE_ID, QW, QX, QY, QZ, TX, TY, TZ, CAMERA_ID, NAME\n")
-            f.write("#   POINTS2D[] as (X, Y, POINT3D_ID)\n")
-
-            for i, cam in enumerate(cameras):
-                rot, trans = blender_to_colmap_matrix(cam.matrix_world)
-
-                image_name = f"image_{i:04d}.{image_ext}"
-
-                f.write(f"{i + 1} {rot.w:.6f} {rot.x:.6f} {rot.y:.6f} {rot.z:.6f} ")
-                f.write(f"{trans.x:.6f} {trans.y:.6f} {trans.z:.6f} 1 {image_name}\n")
-                # Use single space for points line - prevents removal as "empty"
-                f.write(" \n")
-        _ensure_file_written(images_file, "COLMAP images file")
-    except Exception as e:
-        raise IOError(f"Error writing COLMAP images file '{images_file}': {e}") from e
-
-    # points3D.txt - generate initial points
     points_file = os.path.join(output_path, "points3D.txt")
-    _ensure_path_length(points_file, "COLMAP points file")
-    _, points_warning = generate_initial_points(cameras, points_file)
+
+    _write_colmap_cameras_text(cameras_file, image_width, image_height, intrinsics)
+    _write_colmap_images_text(images_file, image_rows)
+
+    points, points_warning = _build_initial_points(
+        cameras,
+        num_points=initial_point_count,
+        sampling_mode=point_sampling_mode,
+        target_objects=target_objects,
+    )
+    _write_colmap_points_text(points_file, points)
+
+    if export_binary:
+        cameras_bin = os.path.join(output_path, "cameras.bin")
+        images_bin = os.path.join(output_path, "images.bin")
+        points_bin = os.path.join(output_path, "points3D.bin")
+
+        _write_colmap_cameras_binary(cameras_bin, image_width, image_height, intrinsics)
+        _write_colmap_images_binary(images_bin, image_rows)
+        _write_colmap_points_binary(points_bin, points)
+
+    valid, validation_error = validate_colmap_export(
+        output_path,
+        expected_image_count=len(cameras),
+        expect_binary=bool(export_binary),
+    )
+    if not valid:
+        raise IOError(f"COLMAP export validation failed: {validation_error}")
+
     if points_warning:
         return True, points_warning
     return True, None
 
 
-def generate_initial_points(cameras, output_file, num_points=5000):
+def generate_initial_points(
+    cameras,
+    output_file,
+    num_points=5000,
+    sampling_mode='RANDOM_VOLUME',
+    target_objects=None,
+):
     """Generate initial 3D points for Gaussian Splatting training.
 
     For synthetic Blender captures, generates random points in the
@@ -354,6 +910,8 @@ def generate_initial_points(cameras, output_file, num_points=5000):
         cameras: List of Blender camera objects
         output_file: Path to output points3D.txt
         num_points: Number of points to generate
+        sampling_mode: Point generation mode ('RANDOM_VOLUME' or 'SURFACE_FALLBACK')
+        target_objects: Optional mesh objects used for surface sampling
 
     Returns:
         tuple: (success: bool, warning_message: str or None)
@@ -361,79 +919,14 @@ def generate_initial_points(cameras, output_file, num_points=5000):
     if not cameras:
         return False, "COLMAP points export skipped: no cameras available."
 
-    _ensure_path_length(output_file, "COLMAP points file")
-
-    # Use local random instance to avoid polluting global random state
-    rng = random.Random(42)  # Reproducible
-
-    # Calculate scene bounds from camera positions
-    cam_positions = []
-    cam_targets = []
-
-    for cam in cameras:
-        pos = cam.matrix_world.translation
-        cam_positions.append(pos)
-
-        # Camera looks along -Z in local space
-        forward = cam.matrix_world.to_3x3() @ Vector((0, 0, -1))
-        forward.normalize()
-        dist_to_origin = pos.length
-        target = pos + forward * dist_to_origin
-        cam_targets.append(target)
-
-    if not cam_positions:
-        center = Vector((0, 0, 0))
-        radius = 5.0
-    else:
-        # Camera center
-        cam_center = sum(cam_positions, Vector()) / len(cam_positions)
-
-        # Target center (where cameras are looking)
-        target_center = sum(cam_targets, Vector()) / len(cam_targets)
-
-        # Max distance from camera center
-        max_cam_dist = max((p - cam_center).length for p in cam_positions)
-
-        # Center points at target, radius proportional to camera spread
-        center = target_center
-        radius = max_cam_dist * 0.4
-
-    # Generate points in sphere
-    points = []
-    for _ in range(num_points):
-        # Random point in unit sphere
-        while True:
-            x = rng.uniform(-1, 1)
-            y = rng.uniform(-1, 1)
-            z = rng.uniform(-1, 1)
-            if x * x + y * y + z * z <= 1:
-                break
-
-        # Scale and translate
-        px = center.x + x * radius
-        py = center.y + y * radius
-        pz = center.z + z * radius
-
-        # Random color
-        r = rng.randint(128, 255)
-        g = rng.randint(128, 255)
-        b = rng.randint(128, 255)
-
-        points.append((px, py, pz, r, g, b))
-
-    # Write points3D.txt
-    try:
-        with open(output_file, 'w') as f:
-            f.write("# 3D point list with one line of data per point:\n")
-            f.write("#   POINT3D_ID, X, Y, Z, R, G, B, ERROR, TRACK[] as (IMAGE_ID, POINT2D_IDX)\n")
-
-            for i, (px, py, pz, r, g, b) in enumerate(points):
-                f.write(f"{i + 1} {px:.6f} {py:.6f} {pz:.6f} {r} {g} {b} 0.0\n")
-        _ensure_file_written(output_file, "COLMAP points file")
-    except Exception as e:
-        raise IOError(f"Error writing COLMAP points file '{output_file}': {e}") from e
-
-    return True, None
+    points, warning = _build_initial_points(
+        cameras,
+        num_points=num_points,
+        sampling_mode=sampling_mode,
+        target_objects=target_objects,
+    )
+    _write_colmap_points_text(output_file, points)
+    return True, warning
 
 
 def export_transforms_json(cameras, output_path, image_width, image_height,

@@ -258,6 +258,20 @@ class GSCAPTURE_PT_TrainingPanel(Panel):
         row.prop(settings, "training_output_path", text="")
         row.operator("gs_capture.browse_training_output", text="", icon='FILEBROWSER')
 
+        # Import options
+        import_box = box.box()
+        import_box.label(text="Import Trained Splat:", icon='IMPORT')
+
+        col = import_box.column(align=True)
+        col.prop(settings, "training_import_location", text="Location")
+        col.prop(settings, "training_import_uniform_scale", text="Scale")
+        col.prop(settings, "training_import_replace_selection")
+
+        row = import_box.row(align=True)
+        row.enabled = bool(settings.training_output_path)
+        op = row.operator("gs_capture.open_training_output", text="Import Trained Splat", icon='IMPORT')
+        op.action = 'IMPORT_SPLAT'
+
         # Training parameters
         layout.separator()
         box = layout.box()
@@ -435,7 +449,13 @@ class GSCAPTURE_PT_TrainingPanel(Panel):
                     col = box.column(align=True)
                     col.scale_y = 0.8
                     col.label(text=result_path)
-                    box.operator("gs_capture.open_training_output", text="Open Folder", icon='FILE_FOLDER')
+
+                    row = box.row(align=True)
+                    import_op = row.operator("gs_capture.open_training_output", text="Import Trained Splat", icon='IMPORT')
+                    import_op.action = 'IMPORT_SPLAT'
+
+                    folder_op = row.operator("gs_capture.open_training_output", text="Open Folder", icon='FILE_FOLDER')
+                    folder_op.action = 'OPEN_FOLDER'
 
 
 class GSCAPTURE_PT_TrainingAdvanced(Panel):
