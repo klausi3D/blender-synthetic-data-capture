@@ -390,7 +390,10 @@ class GSCAPTURE_OT_OpenTrainingOutput(Operator):
 
     bl_idname = "gs_capture.open_training_output"
     bl_label = "Open Output Folder"
-    bl_description = "Open output directory or import trained .ply into Blender"
+    bl_description = (
+        "Open output directory or import trained .ply into Blender "
+        "(falls back to Blender PLY import when KIRI API is unavailable)"
+    )
 
     action: EnumProperty(
         name="Action",

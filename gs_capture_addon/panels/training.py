@@ -271,6 +271,10 @@ class GSCAPTURE_PT_TrainingPanel(Panel):
         row.enabled = bool(settings.training_output_path)
         op = row.operator("gs_capture.open_training_output", text="Import Trained Splat", icon='IMPORT')
         op.action = 'IMPORT_SPLAT'
+        import_box.label(
+            text="Falls back to Blender PLY import if no KIRI API is detected",
+            icon='INFO',
+        )
 
         # Training parameters
         layout.separator()

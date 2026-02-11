@@ -85,7 +85,7 @@ class GSCAPTURE_PT_warnings(Panel):
             # Fix/View buttons
             row = box.row(align=True)
             row.operator("gs_capture.show_material_problems", text="Details", icon='RIGHTARROW')
-            row.operator("gs_capture.fix_material_problems", text="Fix All", icon='MODIFIER')
+            row.operator("gs_capture.fix_material_problems", text="Fix Material Issues", icon='MODIFIER')
 
         # Coverage display
         if settings.coverage_analyzed:
