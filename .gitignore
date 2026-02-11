@@ -81,6 +81,10 @@ local_archive/
 *.blend4
 *.blend5
 
+# Local working .blend files (keep curated demos under examples/)
+/*.blend
+/assets/**/*.blend
+
 # ----- Large media (if any) -----
 *.mp4
 *.mov
