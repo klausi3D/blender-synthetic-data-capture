@@ -2,8 +2,33 @@
 Main panel with quick capture buttons and progress display.
 """
 
+import os
+import time
+
 import bpy
 from bpy.types import Panel
+
+_CHECKPOINT_CACHE = {}
+
+
+def _load_checkpoint_cached(output_path, ttl_seconds=1.5):
+    """Cache checkpoint file reads to avoid JSON disk reads every redraw."""
+    checkpoint_path = os.path.join(output_path, ".gs_capture_checkpoint.json")
+    try:
+        checkpoint_mtime = os.path.getmtime(checkpoint_path)
+    except OSError:
+        checkpoint_mtime = 0.0
+
+    cache_key = (output_path, checkpoint_mtime)
+    now = time.monotonic()
+    entry = _CHECKPOINT_CACHE.get(cache_key)
+    if entry and (now - entry["ts"]) < ttl_seconds:
+        return entry["value"]
+
+    from ..utils.checkpoint import load_checkpoint
+    value = load_checkpoint(output_path)
+    _CHECKPOINT_CACHE[cache_key] = {"ts": now, "value": value}
+    return value
 
 
 class GSCAPTURE_PT_main_panel(Panel):
@@ -38,9 +63,8 @@ class GSCAPTURE_PT_main_panel(Panel):
 
         # Checkpoint status
         if settings.enable_checkpoints:
-            from ..utils.checkpoint import load_checkpoint
             output_path = bpy.path.abspath(settings.output_path)
-            checkpoint, _ = load_checkpoint(output_path)
+            checkpoint, _ = _load_checkpoint_cached(output_path)
             if checkpoint:
                 box = layout.box()
                 box.label(text="Checkpoint Found", icon='FILE_REFRESH')

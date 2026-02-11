@@ -6,6 +6,7 @@ directly from Blender, with real-time progress monitoring.
 """
 
 import os
+import time
 import bpy
 from bpy.types import Panel, Operator
 
@@ -17,6 +18,39 @@ from ..utils.folder_structure import get_export_settings, validate_structure, co
 # =============================================================================
 # HELPER FUNCTIONS
 # =============================================================================
+
+_UI_CACHE = {}
+
+
+def _cached_value(namespace, key, ttl_seconds, loader):
+    """Small redraw cache to avoid heavy filesystem checks every frame."""
+    now = time.monotonic()
+    cache_key = (namespace, key)
+    entry = _UI_CACHE.get(cache_key)
+    if entry and (now - entry["ts"]) < ttl_seconds:
+        return entry["value"]
+
+    value = loader()
+    _UI_CACHE[cache_key] = {"ts": now, "value": value}
+    return value
+
+
+def _safe_dir_mtime(path):
+    """Best-effort directory mtime used for cache keying."""
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return 0.0
+
+
+def _get_backend_maps_cached():
+    """Cache backend availability probes briefly for UI redraw performance."""
+    return _cached_value(
+        "backend_maps",
+        "all",
+        1.5,
+        lambda: (get_available_backends(), get_all_backends()),
+    )
 
 def _get_export_warnings(settings):
     """Get list of export setting warnings for the selected backend.
@@ -46,7 +80,7 @@ def _get_export_warnings(settings):
     return warnings
 
 
-def _get_backend_status(backend_id, data_path):
+def _get_backend_status(backend_id, data_path, backends=None, all_backends=None):
     """Get backend availability and data compatibility status.
 
     Args:
@@ -59,8 +93,8 @@ def _get_backend_status(backend_id, data_path):
             status_text: Status description
             status_alert: Whether to show alert styling
     """
-    backends = get_available_backends()
-    all_backends = get_all_backends()
+    if backends is None or all_backends is None:
+        backends, all_backends = _get_backend_maps_cached()
 
     # Check if backend is installed
     if backend_id not in backends:
@@ -79,8 +113,14 @@ def _get_backend_status(backend_id, data_path):
     if not os.path.exists(data_path_normalized):
         return 'QUESTION', "Data path not found", True
 
-    # Validate data structure
-    is_valid, message = backend.validate_data(data_path_normalized)
+    # Validate data structure (cached because this is called during redraws).
+    data_mtime = _safe_dir_mtime(data_path_normalized)
+    is_valid, message = _cached_value(
+        "backend_validate_data",
+        (backend_id, data_path_normalized, data_mtime),
+        1.5,
+        lambda: backend.validate_data(data_path_normalized),
+    )
 
     if is_valid:
         return 'CHECKMARK', "Ready to train", False
@@ -108,25 +148,28 @@ def _get_data_path_status(settings, backend_id):
     if not os.path.exists(data_path_normalized):
         return 'ERROR', "Path does not exist", False
 
-    # Check structure
-    is_valid, missing_required, missing_optional = validate_structure(data_path_normalized, backend_id)
+    def _compute():
+        is_valid, missing_required, missing_optional = validate_structure(data_path_normalized, backend_id)
 
-    if not is_valid:
-        return 'ERROR', f"Missing: {', '.join(missing_required[:2])}", False
+        if not is_valid:
+            return 'ERROR', f"Missing: {', '.join(missing_required[:2])}", False
 
-    # Count images
-    image_count = count_images(data_path_normalized)
+        image_count = count_images(data_path_normalized)
+        if image_count == 0:
+            return 'ERROR', "No images found", False
+        if image_count < 10:
+            return 'SORTTIME', f"{image_count} images (low count)", True
+        if missing_optional:
+            return 'SORTTIME', f"{image_count} images (missing optional data)", True
+        return 'CHECKMARK', f"{image_count} images ready", True
 
-    if image_count == 0:
-        return 'ERROR', "No images found", False
-
-    if image_count < 10:
-        return 'SORTTIME', f"{image_count} images (low count)", True
-
-    if missing_optional:
-        return 'SORTTIME', f"{image_count} images (missing optional data)", True
-
-    return 'CHECKMARK', f"{image_count} images ready", True
+    data_mtime = _safe_dir_mtime(data_path_normalized)
+    return _cached_value(
+        "data_path_status",
+        (backend_id, data_path_normalized, data_mtime),
+        1.5,
+        _compute,
+    )
 
 
 # =============================================================================
@@ -197,7 +240,7 @@ class GSCAPTURE_PT_TrainingPanel(Panel):
 
     def _draw_setup(self, layout, context, settings):
         """Draw training setup UI when not running."""
-        backends = get_available_backends()
+        backends, all_backends = _get_backend_maps_cached()
         current_backend = settings.training_backend
 
         # Backend selection with status indicator
@@ -210,7 +253,10 @@ class GSCAPTURE_PT_TrainingPanel(Panel):
 
         # Backend status indicator
         status_icon, status_text, is_alert = _get_backend_status(
-            current_backend, settings.training_data_path
+            current_backend,
+            settings.training_data_path,
+            backends=backends,
+            all_backends=all_backends,
         )
 
         status_row = box.row()
@@ -592,9 +638,20 @@ class GSCAPTURE_PT_TrainingCustomBackends(Panel):
             icon='FILEBROWSER'
         )
 
-        # List loaded custom backends
-        custom_backends = load_custom_backends()
+        # List loaded custom backends (cached for redraw performance).
+        custom_backends = _cached_value(
+            "custom_backends_list",
+            "default",
+            2.0,
+            load_custom_backends,
+        )
         if custom_backends:
+            backend_status = _cached_value(
+                "custom_backends_status",
+                tuple(sorted(custom_backends.keys())),
+                2.0,
+                lambda: {bid: backend.is_available() for bid, backend in custom_backends.items()},
+            )
             layout.separator()
             box = layout.box()
             box.label(text=f"Loaded: {len(custom_backends)}", icon='CHECKMARK')
@@ -602,8 +659,9 @@ class GSCAPTURE_PT_TrainingCustomBackends(Panel):
             col = box.column(align=True)
             col.scale_y = 0.8
             for backend_id, backend in custom_backends.items():
-                status = "Ready" if backend.is_available() else "Not Available"
-                icon = 'CHECKMARK' if backend.is_available() else 'ERROR'
+                is_available = backend_status.get(backend_id, False)
+                status = "Ready" if is_available else "Not Available"
+                icon = 'CHECKMARK' if is_available else 'ERROR'
                 col.label(text=f"  {backend.name}: {status}", icon=icon)
         else:
             layout.separator()

@@ -74,6 +74,12 @@ class GSCAPTURE_OT_clear_preview(Operator):
 
     def execute(self, context):
         delete_gs_cameras(context)
+        try:
+            from ..utils.viewport import hide_camera_frustums
+            hide_camera_frustums()
+        except Exception:
+            # Keep preview clear robust even if viewport utils are unavailable.
+            pass
         self.report({'INFO'}, "Cleared preview cameras")
         return {'FINISHED'}
 

@@ -56,34 +56,38 @@ class GSCAPTURE_OT_batch_capture(Operator):
 
     def modal(self, context, event):
         settings = context.scene.gs_capture_settings
-
-        if event.type == 'ESC':
-            self._cancel_batch = True
-            if settings.is_rendering:
-                settings.cancel_requested = True
-            return {'RUNNING_MODAL'}
-
-        if event.type == 'TIMER':
-            if self._cancel_batch:
+        try:
+            if event.type == 'ESC':
+                self._cancel_batch = True
                 if settings.is_rendering:
-                    return {'RUNNING_MODAL'}
-                self._finish(context, cancelled=True)
-                return {'CANCELLED'}
+                    settings.cancel_requested = True
+                return {'RUNNING_MODAL'}
 
-            if self._waiting_for_capture and not settings.is_rendering:
-                if settings.last_capture_success:
-                    self._completed += 1
-                else:
-                    self._failed += 1
+            if event.type == 'TIMER':
+                if self._cancel_batch:
+                    if settings.is_rendering:
+                        return {'RUNNING_MODAL'}
+                    self._finish(context, cancelled=True)
+                    return {'CANCELLED'}
 
-                self._waiting_for_capture = False
+                if self._waiting_for_capture and not settings.is_rendering:
+                    if settings.last_capture_success:
+                        self._completed += 1
+                    else:
+                        self._failed += 1
 
-                if not self._start_next_capture(context):
-                    self._finish(context)
-                    self.report({'INFO'}, f"Batch complete: {self._completed} succeeded, {self._failed} failed")
-                    return {'FINISHED'}
+                    self._waiting_for_capture = False
 
-        return {'PASS_THROUGH'}
+                    if not self._start_next_capture(context):
+                        self._finish(context)
+                        self.report({'INFO'}, f"Batch complete: {self._completed} succeeded, {self._failed} failed")
+                        return {'FINISHED'}
+
+            return {'PASS_THROUGH'}
+        except Exception as exc:
+            self._finish(context, cancelled=True)
+            self.report({'ERROR'}, f"Batch capture stopped due to unexpected error: {exc}")
+            return {'CANCELLED'}
 
     def _build_items_to_capture(self, context, settings):
         items_to_capture = []

@@ -131,18 +131,24 @@ class GSCAPTURE_OT_StartTraining(Operator):
 
     def modal(self, context, event):
         """Handle modal events for progress updates."""
-        if event.type == 'TIMER':
-            # Force UI redraw
-            for area in context.screen.areas:
-                if area.type == 'VIEW_3D':
-                    area.tag_redraw()
+        try:
+            if event.type == 'TIMER':
+                screen = getattr(context, "screen", None)
+                if screen is not None:
+                    for area in screen.areas:
+                        if area.type == 'VIEW_3D':
+                            area.tag_redraw()
 
-            # Check if process finished
-            if self._process and not self._process.is_running:
-                self._finish(context)
-                return {'FINISHED'}
+                # Check if process finished
+                if self._process and not self._process.is_running:
+                    self._finish(context)
+                    return {'FINISHED'}
 
-        return {'PASS_THROUGH'}
+            return {'PASS_THROUGH'}
+        except Exception as exc:
+            self._finish(context)
+            self.report({'ERROR'}, f"Training UI update stopped due to unexpected error: {exc}")
+            return {'CANCELLED'}
 
     def cancel(self, context):
         """Cancel the modal operation."""
