@@ -32,6 +32,15 @@ class GSCAPTURE_PT_output_panel(Panel):
         col.prop(settings, "export_colmap", text="COLMAP (sparse/0/)")
         col.prop(settings, "export_transforms_json", text="transforms.json")
 
+        if settings.export_colmap:
+            box = layout.box()
+            box.label(text="COLMAP Settings:", icon='SETTINGS')
+            box.prop(settings, "export_colmap_binary", text="Also Export Binary (.bin)")
+            box.prop(settings, "colmap_initial_point_count", text="Initial Point Count")
+            box.prop(settings, "colmap_point_sampling", text="Point Sampling")
+            if settings.colmap_point_sampling == 'SURFACE_FALLBACK':
+                box.label(text="Uses mesh colors/materials when possible", icon='INFO')
+
         layout.separator()
         layout.label(text="Additional Outputs:", icon='IMAGE_DATA')
 

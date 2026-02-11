@@ -8,7 +8,7 @@ before starting a capture to prevent common issues.
 import os
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import bpy
 
 from ..utils.coverage import CoverageAnalyzer
@@ -66,6 +66,11 @@ class ValidationResult:
         """Count of warning-level issues."""
         return sum(1 for i in self.issues if i.level == ValidationLevel.WARNING)
 
+    @property
+    def info_count(self) -> int:
+        """Count of informational issues."""
+        return sum(1 for i in self.issues if i.level == ValidationLevel.INFO)
+
     def add_error(self, category: str, message: str, suggestion: str = "",
                   auto_fixable: bool = False, fix_operator: str = "") -> None:
         """Add an error issue."""
@@ -97,6 +102,40 @@ class ValidationResult:
             category=category,
             message=message
         ))
+
+
+def validation_issue_to_dict(issue: ValidationIssue) -> Dict[str, Any]:
+    """Convert a ValidationIssue to a JSON-serializable dictionary."""
+    payload = {
+        "level": issue.level.value,
+        "category": issue.category,
+        "message": issue.message,
+    }
+    if issue.suggestion:
+        payload["suggestion"] = issue.suggestion
+    if issue.auto_fixable:
+        payload["auto_fixable"] = True
+    if issue.fix_operator:
+        payload["fix_operator"] = issue.fix_operator
+    return payload
+
+
+def validation_result_to_dict(result: Optional[ValidationResult]) -> Dict[str, Any]:
+    """Convert ValidationResult to a stable JSON payload."""
+    if result is None:
+        return {"available": False}
+
+    return {
+        "available": True,
+        "can_proceed": result.can_proceed,
+        "counts": {
+            "errors": result.error_count,
+            "warnings": result.warning_count,
+            "info": result.info_count,
+            "total": len(result.issues),
+        },
+        "issues": [validation_issue_to_dict(issue) for issue in result.issues],
+    }
 
 
 class SceneValidator:

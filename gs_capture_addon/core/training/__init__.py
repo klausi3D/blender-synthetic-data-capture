@@ -21,6 +21,10 @@ Custom backends:
     See example_backend.yaml for the configuration format.
 """
 
+import os
+import re
+from typing import Optional
+
 from .base import TrainingBackend, TrainingConfig, TrainingProgress, TrainingStatus
 from .gaussian_splatting import GaussianSplattingBackend
 from .gs_lightning import GSLightningBackend
@@ -35,6 +39,7 @@ from .custom_backend import (
     get_custom_backends_dir,
     validate_backend_config,
 )
+from ...utils.paths import normalize_path
 
 # Built-in backends (lowercase IDs to match properties.py)
 BUILTIN_BACKENDS = {
@@ -172,6 +177,87 @@ def get_custom_backend_enum_items():
     return items
 
 
+def _score_model_candidate(path: str) -> tuple:
+    """Rank candidate model paths for fallback discovery."""
+    path_lower = path.lower().replace("\\", "/")
+    file_name = os.path.basename(path_lower)
+
+    score = 0
+    if file_name == "point_cloud.ply":
+        score += 100
+    if "/point_cloud/" in path_lower:
+        score += 40
+    if "/exports/" in path_lower:
+        score += 30
+    if "splat" in file_name:
+        score += 15
+    if "final" in file_name:
+        score += 10
+
+    iter_match = re.search(r"iteration[_-](\d+)", path_lower)
+    iteration = int(iter_match.group(1)) if iter_match else -1
+
+    try:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        mtime = 0.0
+
+    return score, iteration, mtime
+
+
+def find_model_path_with_fallback(backend: Optional[TrainingBackend], output_path: str) -> Optional[str]:
+    """Find a trained .ply by backend preference, then recursive fallback search.
+
+    Args:
+        backend: Selected backend instance (or None)
+        output_path: Output directory from training settings/process
+
+    Returns:
+        Absolute normalized path to the selected .ply file, or None
+    """
+    normalized_output = normalize_path(output_path)
+    if not normalized_output:
+        return None
+
+    backend_candidate = None
+    if backend:
+        try:
+            backend_candidate = backend.get_model_path(normalized_output)
+        except Exception:
+            backend_candidate = None
+
+    if backend_candidate:
+        backend_candidate = normalize_path(backend_candidate)
+        if os.path.isfile(backend_candidate) and backend_candidate.lower().endswith(".ply"):
+            return backend_candidate
+
+    if not os.path.isdir(normalized_output):
+        return None
+
+    search_roots = [normalized_output]
+    if backend_candidate and os.path.isdir(backend_candidate):
+        search_roots.insert(0, backend_candidate)
+
+    candidates = []
+    seen = set()
+
+    for root in search_roots:
+        normalized_root = normalize_path(root)
+        if normalized_root in seen or not os.path.isdir(normalized_root):
+            continue
+        seen.add(normalized_root)
+
+        for walk_root, _, files in os.walk(normalized_root):
+            for file_name in files:
+                if file_name.lower().endswith(".ply"):
+                    candidates.append(os.path.join(walk_root, file_name))
+
+    if not candidates:
+        return None
+
+    return max(candidates, key=_score_model_candidate)
+
+
 __all__ = [
     # Base classes
     'TrainingBackend',
@@ -198,6 +284,7 @@ __all__ = [
     'get_builtin_backends',
     'get_backend_enum_items',
     'get_custom_backend_enum_items',
+    'find_model_path_with_fallback',
     # Process management
     'get_running_process',
     'start_training',

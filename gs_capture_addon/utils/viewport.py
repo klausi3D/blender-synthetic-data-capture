@@ -254,10 +254,7 @@ def show_camera_frustums(cameras, frustum_length=1.0):
     viz.show_frustums = True
     viz.register()
 
-    # Force viewport redraw
-    for area in bpy.context.screen.areas:
-        if area.type == 'VIEW_3D':
-            area.tag_redraw()
+    _tag_view3d_redraw()
 
 
 def hide_camera_frustums():
@@ -265,10 +262,9 @@ def hide_camera_frustums():
     viz = get_camera_visualizer()
     viz.show_frustums = False
     viz.clear()
+    viz.unregister()
 
-    for area in bpy.context.screen.areas:
-        if area.type == 'VIEW_3D':
-            area.tag_redraw()
+    _tag_view3d_redraw()
 
 
 def cleanup_visualizers():
@@ -276,3 +272,14 @@ def cleanup_visualizers():
     viz = get_camera_visualizer()
     viz.unregister()
     viz.clear()
+
+
+def _tag_view3d_redraw():
+    """Best-effort redraw request for all 3D viewports."""
+    context = bpy.context
+    screen = getattr(context, "screen", None)
+    if screen is None:
+        return
+    for area in screen.areas:
+        if area.type == 'VIEW_3D':
+            area.tag_redraw()

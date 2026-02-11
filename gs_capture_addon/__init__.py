@@ -151,6 +151,13 @@ def register():
 
 def unregister():
     """Unregister all addon classes and properties."""
+    # Ensure viewport draw handlers are removed on addon unload.
+    try:
+        from .utils.viewport import cleanup_visualizers
+        cleanup_visualizers()
+    except Exception:
+        pass
+
     # Unregister in reverse order
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)

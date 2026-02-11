@@ -26,6 +26,14 @@ class GSCAPTURE_PT_warnings(Panel):
         row.scale_y = 1.2
         row.operator("gs_capture.analyze_scene_mvp", text="Analyze Scene", icon='VIEWZOOM')
 
+        row = layout.row(align=True)
+        validate_op = row.operator(
+            "gs_capture.capture_selected",
+            text="Validation Summary",
+            icon='CHECKMARK',
+        )
+        validate_op.preflight_only = True
+
         # Scene Score display
         if settings.scene_analyzed:
             box = layout.box()
@@ -77,7 +85,7 @@ class GSCAPTURE_PT_warnings(Panel):
             # Fix/View buttons
             row = box.row(align=True)
             row.operator("gs_capture.show_material_problems", text="Details", icon='RIGHTARROW')
-            row.operator("gs_capture.fix_material_problems", text="Fix All", icon='MODIFIER')
+            row.operator("gs_capture.fix_material_problems", text="Fix Material Issues", icon='MODIFIER')
 
         # Coverage display
         if settings.coverage_analyzed:

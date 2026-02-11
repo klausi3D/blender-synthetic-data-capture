@@ -113,6 +113,11 @@ Resolution, samples, engine, and file format are still controlled in Blender's R
 ### Export Options
 
 - Export COLMAP Format: creates `sparse/0/` files
+- Also Export COLMAP Binary: additionally writes `cameras.bin`, `images.bin`, `points3D.bin`
+- COLMAP Initial Points: controls generated `points3D` count (default 5000)
+- COLMAP Point Sampling:
+  - Random Volume (Legacy): previous random volume behavior
+  - Surface With Fallback: samples mesh surfaces (uses mesh/material color when possible), falls back to volume
 - Export transforms.json: NeRF-style camera export
 - Export Depth Maps: `depth/depth_0000.png` (16-bit)
 - Export Normal Maps: `normals/normal_0000.exr`
@@ -191,6 +196,9 @@ output/
       cameras.txt
       images.txt
       points3D.txt
+      cameras.bin        # Optional
+      images.bin         # Optional
+      points3D.bin       # Optional
 ```
 
 ### transforms.json

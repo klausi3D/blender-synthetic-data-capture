@@ -8,11 +8,12 @@ processes with real-time progress updates.
 import os
 import bpy
 from bpy.types import Operator
-from bpy.props import StringProperty
+from bpy.props import StringProperty, EnumProperty
 
 from ..core.training import (
     get_available_backends,
     get_all_backends,
+    find_model_path_with_fallback,
     get_running_process,
     start_training,
     stop_training
@@ -130,18 +131,24 @@ class GSCAPTURE_OT_StartTraining(Operator):
 
     def modal(self, context, event):
         """Handle modal events for progress updates."""
-        if event.type == 'TIMER':
-            # Force UI redraw
-            for area in context.screen.areas:
-                if area.type == 'VIEW_3D':
-                    area.tag_redraw()
+        try:
+            if event.type == 'TIMER':
+                screen = getattr(context, "screen", None)
+                if screen is not None:
+                    for area in screen.areas:
+                        if area.type == 'VIEW_3D':
+                            area.tag_redraw()
 
-            # Check if process finished
-            if self._process and not self._process.is_running:
-                self._finish(context)
-                return {'FINISHED'}
+                # Check if process finished
+                if self._process and not self._process.is_running:
+                    self._finish(context)
+                    return {'FINISHED'}
 
-        return {'PASS_THROUGH'}
+            return {'PASS_THROUGH'}
+        except Exception as exc:
+            self._finish(context)
+            self.report({'ERROR'}, f"Training UI update stopped due to unexpected error: {exc}")
+            return {'CANCELLED'}
 
     def cancel(self, context):
         """Cancel the modal operation."""
@@ -385,28 +392,57 @@ class GSCAPTURE_OT_BrowseTrainingOutput(Operator):
 
 
 class GSCAPTURE_OT_OpenTrainingOutput(Operator):
-    """Open the training output folder.
-
-    Opens the file explorer at the training output directory.
-    """
+    """Open training output folder or import trained splat."""
 
     bl_idname = "gs_capture.open_training_output"
     bl_label = "Open Output Folder"
-    bl_description = "Open training output directory in file explorer"
+    bl_description = (
+        "Open output directory or import trained .ply into Blender "
+        "(falls back to Blender PLY import when KIRI API is unavailable)"
+    )
+
+    action: EnumProperty(
+        name="Action",
+        description="What to do with the training output",
+        items=[
+            ('OPEN_FOLDER', "Open Folder", "Open training output directory in file explorer"),
+            ('IMPORT_SPLAT', "Import Trained Splat", "Import trained .ply from output into Blender"),
+        ],
+        default='OPEN_FOLDER',
+        options={'SKIP_SAVE'},
+    )
 
     def execute(self, context):
-        """Open the folder."""
-        process = get_running_process()
-        if process:
-            output_path = process.config.output_path
-        else:
-            settings = context.scene.gs_capture_settings
-            output_path = settings.training_output_path
-
+        """Open output folder or import trained splat."""
+        output_path, backend = self._resolve_output_and_backend(context)
         if not output_path or not os.path.exists(output_path):
             self.report({'ERROR'}, "Output directory not found")
             return {'CANCELLED'}
 
+        if self.action == 'IMPORT_SPLAT':
+            return self._import_trained_splat(context, output_path, backend)
+
+        self._open_folder(output_path)
+        return {'FINISHED'}
+
+    def _resolve_output_and_backend(self, context):
+        """Resolve output path and selected backend instance."""
+        settings = context.scene.gs_capture_settings
+        process = get_running_process()
+
+        output_path = settings.training_output_path
+        if process and process.config.output_path:
+            output_path = process.config.output_path
+        output_path = normalize_path(output_path)
+
+        backend = get_all_backends().get(settings.training_backend)
+        if backend is None and process:
+            backend = process.backend
+
+        return output_path, backend
+
+    def _open_folder(self, output_path: str) -> None:
+        """Open folder in native file explorer."""
         import subprocess
         import platform
 
@@ -417,7 +453,108 @@ class GSCAPTURE_OT_OpenTrainingOutput(Operator):
         else:
             subprocess.Popen(['xdg-open', output_path])
 
+    def _import_trained_splat(self, context, output_path: str, backend):
+        """Find and import trained .ply with API fallbacks."""
+        model_path = find_model_path_with_fallback(backend, output_path)
+        if not model_path:
+            self.report({'ERROR'}, "No trained .ply found in the selected output path")
+            return {'CANCELLED'}
+
+        # Optional KIRI integration: skipped unless a known, stable API is available.
+        kiri_note = self._get_kiri_status_note()
+
+        previous_selected = list(context.selected_objects)
+        previous_active = context.view_layer.objects.active
+        existing_ids = {obj.as_pointer() for obj in bpy.data.objects}
+
+        importer_name, import_errors = self._import_ply_with_api_fallbacks(model_path)
+        if not importer_name:
+            short_error = import_errors[0] if import_errors else "No supported Blender PLY importer found"
+            self.report({'ERROR'}, short_error[:220])
+            return {'CANCELLED'}
+
+        imported_objects = [
+            obj for obj in bpy.data.objects
+            if obj.as_pointer() not in existing_ids
+        ]
+
+        if not imported_objects:
+            self.report({'WARNING'}, f"PLY imported via {importer_name}, but no new objects were detected")
+            return {'FINISHED'}
+
+        self._apply_import_transform_settings(context, imported_objects)
+        self._apply_selection_behavior(context, imported_objects, previous_selected, previous_active)
+
+        self.report({'INFO'}, f"Imported '{os.path.basename(model_path)}' using {importer_name}")
+        if kiri_note:
+            self.report({'INFO'}, kiri_note)
         return {'FINISHED'}
+
+    def _get_kiri_status_note(self) -> str:
+        """Return optional KIRI integration status text.
+
+        We only attempt KIRI import when a stable API contract is known.
+        """
+        return "KIRI import API not detected; Blender PLY import fallback used"
+
+    def _import_ply_with_api_fallbacks(self, model_path: str):
+        """Try available Blender PLY import operator variants."""
+        candidates = [
+            ("wm.ply_import", getattr(getattr(bpy.ops, "wm", None), "ply_import", None)),
+            ("import_mesh.ply", getattr(getattr(bpy.ops, "import_mesh", None), "ply", None)),
+            ("import_scene.ply", getattr(getattr(bpy.ops, "import_scene", None), "ply", None)),
+        ]
+        errors = []
+
+        for op_name, op in candidates:
+            if op is None:
+                continue
+            try:
+                result = op(filepath=model_path)
+            except Exception as exc:
+                errors.append(f"{op_name} failed: {exc}")
+                continue
+
+            if isinstance(result, set) and 'FINISHED' in result:
+                return op_name, errors
+            errors.append(f"{op_name} returned {result}")
+
+        return None, errors
+
+    def _apply_import_transform_settings(self, context, imported_objects):
+        """Apply location and uniform scale settings to imported objects."""
+        settings = context.scene.gs_capture_settings
+        location = tuple(settings.training_import_location)
+        uniform_scale = settings.training_import_uniform_scale
+
+        for obj in imported_objects:
+            obj.location = location
+            obj.scale = (uniform_scale, uniform_scale, uniform_scale)
+
+    def _apply_selection_behavior(self, context, imported_objects, previous_selected, previous_active):
+        """Apply replace/append selection behavior after import."""
+        settings = context.scene.gs_capture_settings
+
+        for obj in list(context.selected_objects):
+            obj.select_set(False)
+
+        if settings.training_import_replace_selection:
+            for obj in imported_objects:
+                obj.select_set(True)
+            context.view_layer.objects.active = imported_objects[0]
+            return
+
+        for obj in previous_selected:
+            if bpy.data.objects.get(obj.name):
+                obj.select_set(True)
+
+        for obj in imported_objects:
+            obj.select_set(True)
+
+        if previous_active and bpy.data.objects.get(previous_active.name):
+            context.view_layer.objects.active = previous_active
+        else:
+            context.view_layer.objects.active = imported_objects[0]
 
 
 class GSCAPTURE_OT_ShowInstallInstructions(Operator):

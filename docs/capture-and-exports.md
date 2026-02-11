@@ -16,6 +16,13 @@
 - Depth maps: `depth/depth_0000.<ext>`
 - Normal maps: `normals/normal_0000.exr`
 - Masks: `masks/mask_0000.<ext>` or GS-Lightning naming
+- Validation report: `validation_report.json` (pre-capture + post-export checks)
+
+## Validation UX
+
+- `Capture Selected` now opens a pre-capture validation dialog when warnings/errors are found.
+- `Scene Analysis > Validation Summary` opens the same dialog without starting a render.
+- Capture still blocks on validation errors, but warnings can be acknowledged and continued.
 
 ## Blender 4.5 vs 5.0 Output Notes
 
@@ -42,4 +49,3 @@ Depth and object-index mask compositor outputs can differ by Blender major versi
 1. Generate preview cameras.
 2. Run coverage analysis or heatmap.
 3. Increase camera count or adjust elevation if low coverage is reported.
-

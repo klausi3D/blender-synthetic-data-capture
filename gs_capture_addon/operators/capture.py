@@ -6,9 +6,12 @@ Includes checkpoint support, depth/normal/mask export.
 import bpy
 import copy
 import glob
+import json
 import os
 import threading
 import time
+from datetime import datetime, timezone
+from bpy.props import BoolProperty
 from bpy.types import Operator
 from mathutils import Vector
 
@@ -31,7 +34,12 @@ from ..core.export import (
     configure_output_file_node,
     set_output_file_basename,
 )
-from ..core.validation import validate_all, ValidationLevel
+from ..core.validation import (
+    ValidationLevel,
+    ValidationResult,
+    validate_all,
+    validation_result_to_dict,
+)
 from ..preferences import get_preferences
 from ..utils.lighting import (
     setup_neutral_lighting,
@@ -177,6 +185,204 @@ class GSCAPTURE_OT_capture_selected(Operator):
     _export_errors: bool
     _checkpoint_writer: object
     _checkpoints_enabled: bool
+    _pre_capture_validation_result: object
+
+    preflight_only: BoolProperty(
+        name="Validation Summary Only",
+        description="Show validation summary without starting capture",
+        default=False,
+        options={'HIDDEN', 'SKIP_SAVE'},
+    )
+
+    def _get_auto_validate_enabled(self):
+        prefs = get_preferences()
+        return prefs.auto_validate if prefs else True
+
+    def _get_validation_result(self, context, settings, force=False):
+        if not force and not self._get_auto_validate_enabled():
+            return None
+        cached = getattr(self, "_pre_capture_validation_result", None)
+        if cached is not None:
+            return cached
+        result = validate_all(context, settings)
+        self._pre_capture_validation_result = result
+        return result
+
+    def _report_validation_issues(self, validation_result):
+        if validation_result is None:
+            return
+        for issue in validation_result.issues:
+            if issue.level == ValidationLevel.INFO:
+                continue
+            report_level = {'ERROR'} if issue.level == ValidationLevel.ERROR else {'WARNING'}
+            message = issue.message
+            if issue.suggestion and issue.level == ValidationLevel.ERROR:
+                message = f"{issue.message} ({issue.suggestion})"
+            self.report(report_level, message)
+
+    def _should_show_pre_capture_dialog(self, validation_result):
+        if validation_result is None:
+            return False
+        if self.preflight_only:
+            return True
+        return any(
+            issue.level in (ValidationLevel.ERROR, ValidationLevel.WARNING)
+            for issue in validation_result.issues
+        )
+
+    def _dialog_icon_for_issue(self, issue):
+        if issue.level == ValidationLevel.ERROR:
+            return 'ERROR'
+        if issue.level == ValidationLevel.WARNING:
+            return 'INFO'
+        return 'DOT'
+
+    def _draw_validation_dialog(self, layout, validation_result):
+        if validation_result is None:
+            layout.label(text="Validation disabled in preferences", icon='INFO')
+            return
+
+        if validation_result.can_proceed:
+            header_icon = 'CHECKMARK' if validation_result.warning_count == 0 else 'INFO'
+        else:
+            header_icon = 'ERROR'
+
+        title = "Pre-Capture Validation Summary" if self.preflight_only else "Pre-Capture Validation"
+        layout.label(text=title, icon=header_icon)
+        layout.label(
+            text=(
+                f"Errors: {validation_result.error_count} | "
+                f"Warnings: {validation_result.warning_count} | "
+                f"Info: {validation_result.info_count}"
+            )
+        )
+
+        if not validation_result.issues:
+            layout.label(text="No validation issues found.", icon='CHECKMARK')
+            return
+
+        box = layout.box()
+        col = box.column(align=True)
+        max_items = 12
+        for issue in validation_result.issues[:max_items]:
+            col.label(
+                text=f"[{issue.category}] {issue.message}",
+                icon=self._dialog_icon_for_issue(issue),
+            )
+            if issue.suggestion:
+                col.label(text=f"Fix: {issue.suggestion}", icon='RIGHTARROW')
+
+        hidden_count = len(validation_result.issues) - max_items
+        if hidden_count > 0:
+            box.label(text=f"... and {hidden_count} more issue(s)", icon='INFO')
+
+        if not validation_result.can_proceed and not self.preflight_only:
+            layout.label(text="Capture is blocked until errors are fixed.", icon='CANCEL')
+
+    def _count_non_empty_files(self, directory, pattern):
+        """Count files that match pattern and have non-zero size."""
+        matches = glob.glob(os.path.join(directory, pattern))
+        count = 0
+        for path in matches:
+            try:
+                if os.path.getsize(path) > 0:
+                    count += 1
+            except OSError:
+                continue
+        return count
+
+    def _build_post_export_validation(self, settings, image_ext):
+        """Validate exported artifacts and return issues plus check details."""
+        expected = len(self._cameras)
+        result = ValidationResult()
+        checks = []
+
+        def add_check(label, folder, pattern, required):
+            found = self._count_non_empty_files(folder, pattern)
+            check = {
+                "name": label,
+                "folder": folder,
+                "pattern": pattern,
+                "expected": expected if required else 0,
+                "found": found,
+                "required": required,
+            }
+            checks.append(check)
+
+            if required and found < expected:
+                result.add_error(
+                    "export",
+                    f"{label}: expected {expected}, found {found}",
+                    f"Re-run capture to generate missing {label.lower()} files",
+                )
+
+        add_check("images", self._images_path, f"image_*.{image_ext}", required=True)
+
+        if settings.export_depth:
+            add_check(
+                "depth",
+                self._depth_path,
+                f"depth_*.{self._depth_output_extension()}",
+                required=True,
+            )
+
+        if settings.export_normals:
+            add_check("normals", self._normals_path, "normal_*.exr", required=True)
+
+        if settings.export_masks:
+            if settings.mask_source == 'ALPHA':
+                pattern = f"image_*.{image_ext}.png" if settings.mask_format == 'GSL' else "mask_*.png"
+            else:
+                pattern = f"mask_*.{self._object_index_mask_extension()}"
+            add_check("masks", self._masks_path, pattern, required=True)
+
+        return result, checks
+
+    def _write_validation_report(self, settings, image_ext, export_failures, post_result, checks):
+        """Write a JSON validation artifact to the output directory."""
+        output_file = os.path.join(self._output_path, "validation_report.json")
+        payload = {
+            "schema_version": 1,
+            "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "blender_version": ".".join(str(part) for part in bpy.app.version),
+            "output_path": self._output_path,
+            "capture": {
+                "expected_cameras": len(self._cameras),
+                "rendered_this_run": len(self._images_to_render),
+                "completed_images": len(self._checkpoint_data.get("completed_images", [])) if self._checkpoint_data else 0,
+                "export_errors": self._export_errors,
+                "mask_source": settings.mask_source,
+                "mask_format": settings.mask_format,
+                "image_extension": image_ext,
+            },
+            "pre_capture_validation": validation_result_to_dict(
+                getattr(self, "_pre_capture_validation_result", None)
+            ),
+            "post_export_validation": {
+                "result": validation_result_to_dict(post_result),
+                "artifact_checks": checks,
+            },
+            "export_failures": list(export_failures),
+        }
+
+        with open(output_file, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=2)
+        return output_file
+
+    def invoke(self, context, event):
+        settings = context.scene.gs_capture_settings
+        force_validation = self.preflight_only
+        self._pre_capture_validation_result = None
+
+        validation_result = self._get_validation_result(context, settings, force=force_validation)
+        if not self._should_show_pre_capture_dialog(validation_result):
+            return self.execute(context)
+
+        return context.window_manager.invoke_props_dialog(self, width=620)
+
+    def draw(self, context):
+        layout = self.layout
+        self._draw_validation_dialog(layout, getattr(self, "_pre_capture_validation_result", None))
 
     def _get_all_children(self, obj):
         """Recursively get all children of an object."""
@@ -553,6 +759,8 @@ class GSCAPTURE_OT_capture_selected(Operator):
             self.report({'WARNING'}, error)
 
     def execute(self, context):
+        cached_validation = getattr(self, "_pre_capture_validation_result", None)
+
         # Initialize instance variables (avoid class-level mutable defaults)
         self._timer = None
         self._cameras = []
@@ -590,6 +798,7 @@ class GSCAPTURE_OT_capture_selected(Operator):
         self._export_errors = False
         self._checkpoint_writer = None
         self._checkpoints_enabled = False
+        self._pre_capture_validation_result = cached_validation
 
         settings = context.scene.gs_capture_settings
         rd = context.scene.render
@@ -627,28 +836,33 @@ class GSCAPTURE_OT_capture_selected(Operator):
             if self._original_cycles_samples and hasattr(context.scene, 'cycles'):
                 context.scene.cycles.samples = self._original_cycles_samples
 
-        prefs = get_preferences()
-        auto_validate = prefs.auto_validate if prefs else True
+        validation_result = self._get_validation_result(
+            context,
+            settings,
+            force=self.preflight_only,
+        )
+        self._report_validation_issues(validation_result)
 
-        # Validate configuration before starting capture (if enabled)
-        if auto_validate:
-            validation_result = validate_all(context, settings)
-            for issue in validation_result.issues:
-                if issue.level == ValidationLevel.INFO:
-                    continue
-                if issue.level == ValidationLevel.ERROR:
-                    report_level = {'ERROR'}
-                else:
-                    report_level = {'WARNING'}
-
-                message = issue.message
-                if issue.suggestion and issue.level == ValidationLevel.ERROR:
-                    message = f"{issue.message} ({issue.suggestion})"
-                self.report(report_level, message)
-
-            if not validation_result.can_proceed:
-                restore_render_settings()
+        if self.preflight_only:
+            restore_render_settings()
+            if validation_result is None:
+                self.report({'INFO'}, "Validation is disabled in preferences")
+            elif validation_result.can_proceed:
+                self.report(
+                    {'INFO'},
+                    (
+                        f"Validation passed with "
+                        f"{validation_result.warning_count} warning(s) and {validation_result.info_count} info item(s)"
+                    ),
+                )
+            else:
+                self.report({'ERROR'}, "Validation failed. Resolve errors before capture.")
                 return {'CANCELLED'}
+            return {'FINISHED'}
+
+        if validation_result is not None and not validation_result.can_proceed:
+            restore_render_settings()
+            return {'CANCELLED'}
 
         # Get selected objects
         selected = [obj for obj in context.selected_objects if obj.type == 'MESH']
@@ -1047,7 +1261,11 @@ class GSCAPTURE_OT_capture_selected(Operator):
                     _, warning = export_colmap_cameras(
                         self._cameras, colmap_path,
                         rd.resolution_x, rd.resolution_y,
-                        image_ext=image_ext
+                        image_ext=image_ext,
+                        export_binary=settings.export_colmap_binary,
+                        initial_point_count=settings.colmap_initial_point_count,
+                        point_sampling_mode=settings.colmap_point_sampling,
+                        target_objects=self._target_objects,
                     )
                     if warning:
                         self.report({'WARNING'}, warning)
@@ -1078,6 +1296,24 @@ class GSCAPTURE_OT_capture_selected(Operator):
             self._export_errors = True
             for message in export_failures:
                 self.report({'ERROR'}, message)
+
+        post_result, artifact_checks = self._build_post_export_validation(settings, image_ext)
+        if post_result.issues:
+            self._report_validation_issues(post_result)
+            if not post_result.can_proceed:
+                self._export_errors = True
+
+        try:
+            report_path = self._write_validation_report(
+                settings,
+                image_ext,
+                export_failures,
+                post_result,
+                artifact_checks,
+            )
+            self.report({'INFO'}, f"Validation report written: {report_path}")
+        except Exception as exc:
+            self.report({'WARNING'}, f"Failed to write validation report: {exc}")
 
         if self._checkpoints_enabled:
             self._shutdown_checkpoint_writer()

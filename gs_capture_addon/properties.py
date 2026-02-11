@@ -8,6 +8,7 @@ from bpy.props import (
     StringProperty,
     IntProperty,
     FloatProperty,
+    FloatVectorProperty,
     BoolProperty,
     EnumProperty,
     PointerProperty,
@@ -90,6 +91,30 @@ class GSCaptureSettings(PropertyGroup):
         name="Export COLMAP Format",
         description="Export camera data in COLMAP format (sparse/0/)",
         default=True
+    )
+
+    export_colmap_binary: BoolProperty(
+        name="Also Export COLMAP Binary",
+        description="Additionally export cameras.bin/images.bin/points3D.bin",
+        default=False
+    )
+
+    colmap_initial_point_count: IntProperty(
+        name="COLMAP Initial Points",
+        description="Number of synthetic points to generate for points3D",
+        default=5000,
+        min=100,
+        max=200000
+    )
+
+    colmap_point_sampling: EnumProperty(
+        name="COLMAP Point Sampling",
+        description="How initial COLMAP points are generated",
+        items=[
+            ('RANDOM_VOLUME', "Random Volume (Legacy)", "Sample points in camera-centered scene volume"),
+            ('SURFACE_FALLBACK', "Surface With Fallback", "Sample mesh surfaces; fallback to random volume"),
+        ],
+        default='RANDOM_VOLUME'
     )
 
     export_transforms_json: BoolProperty(
@@ -550,6 +575,30 @@ class GSCaptureSettings(PropertyGroup):
         default=100,
         min=10,
         max=1000
+    )
+
+    # Trained splat import settings
+    training_import_location: FloatVectorProperty(
+        name="Import Location",
+        description="World-space location for imported trained splat",
+        subtype='TRANSLATION',
+        size=3,
+        default=(0.0, 0.0, 0.0)
+    )
+
+    training_import_uniform_scale: FloatProperty(
+        name="Import Scale",
+        description="Uniform scale applied to imported trained splat",
+        default=1.0,
+        min=0.0001,
+        soft_min=0.01,
+        soft_max=100.0
+    )
+
+    training_import_replace_selection: BoolProperty(
+        name="Replace Selection",
+        description="Select only the imported splat after import",
+        default=True
     )
 
     # ==========================================================================
