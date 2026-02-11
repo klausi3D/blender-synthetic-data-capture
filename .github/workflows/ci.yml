@@ -112,6 +112,27 @@ jobs:
           & "$env:BLENDER_EXE" --factory-startup --python (Join-Path $pwd "tests/smoke/smoke_object_index_mask.py")
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Run coverage edge-case smoke
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          & "$env:BLENDER_EXE" --factory-startup --python (Join-Path $pwd "tests/smoke/smoke_coverage_edge_cases.py")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run COLMAP binary smoke
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          & "$env:BLENDER_EXE" --factory-startup --python (Join-Path $pwd "tests/smoke/smoke_colmap_binary_export.py")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Run import-trained-splat smoke
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          & "$env:BLENDER_EXE" --factory-startup --python (Join-Path $pwd "tests/smoke/smoke_import_trained_splat.py")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
       - name: Verify smoke reports
         run: python tests/smoke/verify_ci_smoke_reports.py
 
