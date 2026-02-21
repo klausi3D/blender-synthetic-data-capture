@@ -184,51 +184,28 @@ jobs:
               ("import-trained-splat smoke", "tests/smoke/smoke_import_trained_splat.py", 600),
           ]
 
-          def emit_new_output(text, emitted_chars):
-              if not text:
-                  return emitted_chars
-              if emitted_chars > len(text):
-                  emitted_chars = 0
-              new_text = text[emitted_chars:]
-              if new_text:
-                  print(new_text, end="" if new_text.endswith("\n") else "\n", flush=True)
-              return len(text)
-
           for name, rel_script, timeout_seconds in scripts:
               script_path = root / rel_script
               cmd = [blender_exe, "--factory-startup", "--python", str(script_path)]
               print(f"[CI] Running {name}: {rel_script} (timeout={timeout_seconds}s)", flush=True)
-              proc = subprocess.Popen(
-                  cmd,
-                  stdout=subprocess.PIPE,
-                  stderr=subprocess.STDOUT,
-                  text=True,
-                  encoding="utf-8",
-                  errors="replace",
-                  bufsize=1,
-              )
+              proc = subprocess.Popen(cmd)
               start = time.monotonic()
               last_heartbeat = start
               timed_out = False
-              emitted_chars = 0
               while True:
                   try:
-                      output, _ = proc.communicate(timeout=POLL_SECONDS)
-                      emitted_chars = emit_new_output(output, emitted_chars)
+                      proc.wait(timeout=POLL_SECONDS)
                       break
-                  except subprocess.TimeoutExpired as exc:
-                      partial = exc.output or ""
-                      if isinstance(partial, bytes):
-                          partial = partial.decode("utf-8", errors="replace")
-                      emitted_chars = emit_new_output(partial, emitted_chars)
-
+                  except subprocess.TimeoutExpired:
                       now = time.monotonic()
                       elapsed = now - start
                       if elapsed > timeout_seconds:
                           timed_out = True
                           proc.kill()
-                          output, _ = proc.communicate()
-                          emitted_chars = emit_new_output(output, emitted_chars)
+                          try:
+                              proc.wait(timeout=30)
+                          except subprocess.TimeoutExpired:
+                              pass
                           break
 
                       if (now - last_heartbeat) >= HEARTBEAT_SECONDS:
