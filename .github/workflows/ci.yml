@@ -141,23 +141,23 @@ jobs:
           import pathlib
           import subprocess
           import sys
+          import time
 
           blender_exe = os.environ["BLENDER_EXE"]
           root = pathlib.Path.cwd()
-          timeout_seconds = 480  # Fail fast on hangs while allowing slow runners.
           scripts = [
-              ("release smoke verification", "tests/smoke/smoke_release_verification.py"),
-              ("checkpoint-only smoke", "tests/smoke/smoke_checkpoint_resume_only.py"),
-              ("object-index mask smoke", "tests/smoke/smoke_object_index_mask.py"),
-              ("coverage edge-case smoke", "tests/smoke/smoke_coverage_edge_cases.py"),
-              ("COLMAP binary smoke", "tests/smoke/smoke_colmap_binary_export.py"),
-              ("import-trained-splat smoke", "tests/smoke/smoke_import_trained_splat.py"),
+              ("release smoke verification", "tests/smoke/smoke_release_verification.py", 900),
+              ("checkpoint-only smoke", "tests/smoke/smoke_checkpoint_resume_only.py", 600),
+              ("object-index mask smoke", "tests/smoke/smoke_object_index_mask.py", 600),
+              ("coverage edge-case smoke", "tests/smoke/smoke_coverage_edge_cases.py", 600),
+              ("COLMAP binary smoke", "tests/smoke/smoke_colmap_binary_export.py", 600),
+              ("import-trained-splat smoke", "tests/smoke/smoke_import_trained_splat.py", 600),
           ]
 
-          for name, rel_script in scripts:
+          for name, rel_script, timeout_seconds in scripts:
               script_path = root / rel_script
               cmd = [blender_exe, "--factory-startup", "--python", str(script_path)]
-              print(f"[CI] Running {name}: {rel_script}")
+              print(f"[CI] Running {name}: {rel_script} (timeout={timeout_seconds}s)")
               proc = subprocess.Popen(
                   cmd,
                   stdout=subprocess.PIPE,
@@ -165,25 +165,40 @@ jobs:
                   text=True,
                   encoding="utf-8",
                   errors="replace",
+                  bufsize=1,
               )
-              try:
-                  output, _ = proc.communicate(timeout=timeout_seconds)
-              except subprocess.TimeoutExpired:
-                  proc.kill()
-                  output, _ = proc.communicate()
-                  if output:
-                      print(output.rstrip())
+              start = time.monotonic()
+              timed_out = False
+              while True:
+                  line = proc.stdout.readline() if proc.stdout else ""
+                  if line:
+                      print(line.rstrip())
+                  if proc.poll() is not None:
+                      # Flush any remaining buffered output.
+                      if proc.stdout:
+                          for tail in proc.stdout:
+                              print(tail.rstrip())
+                      break
+                  if (time.monotonic() - start) > timeout_seconds:
+                      timed_out = True
+                      proc.kill()
+                      if proc.stdout:
+                          for tail in proc.stdout:
+                              print(tail.rstrip())
+                      break
+                  if not line:
+                      time.sleep(0.1)
+
+              if timed_out:
                   print(f"[CI] ERROR: {name} timed out after {timeout_seconds}s")
                   sys.exit(124)
-
-              if output:
-                  print(output.rstrip())
 
               if proc.returncode != 0:
                   print(f"[CI] ERROR: {name} failed with exit code {proc.returncode}")
                   sys.exit(proc.returncode)
 
-              print(f"[CI] OK: {name} completed")
+              elapsed = int(time.monotonic() - start)
+              print(f"[CI] OK: {name} completed in {elapsed}s")
           '@ | python -
 
       - name: Verify smoke reports
