@@ -26,11 +26,10 @@
 
 ## Path Too Long On Windows
 
-- Use short output roots, for example `C:\gs_capture\scene01`.
+- Use short output roots, for example `C:\<capture_root>\scene01`.
 - Avoid deep nested directories in output location.
 
 ## Backend Not Found
 
 - Re-check addon preference paths and conda env names.
 - Verify required scripts exist (`train.py`, `main.py`, `simple_trainer.py`).
-

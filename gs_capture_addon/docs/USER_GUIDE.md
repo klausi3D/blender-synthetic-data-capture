@@ -240,7 +240,7 @@ Depth and mask entries are only included when those exports are enabled.
   - For object-index masks, assign pass indices and use Object Index source
 
 - Path too long on Windows
-  - Use a shorter output path (e.g., `C:\gs_capture`) and avoid deep folder trees
+  - Use a shorter output path (e.g., `C:\<capture_root>`) and avoid deep folder trees
 
 ---
 

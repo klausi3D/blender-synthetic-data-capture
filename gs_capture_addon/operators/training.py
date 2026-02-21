@@ -6,6 +6,7 @@ processes with real-time progress updates.
 """
 
 import os
+import shlex
 import bpy
 from bpy.types import Operator
 from bpy.props import StringProperty, EnumProperty
@@ -62,7 +63,13 @@ class GSCAPTURE_OT_StartTraining(Operator):
         settings = context.scene.gs_capture_settings
 
         # Run pre-flight check
-        preflight_ok, errors, warnings = self._preflight_check(context)
+        (
+            preflight_ok,
+            errors,
+            warnings,
+            normalized_data_path,
+            normalized_output_path,
+        ) = self._preflight_check(context)
 
         # Report warnings (but continue)
         for warning in warnings:
@@ -89,15 +96,25 @@ class GSCAPTURE_OT_StartTraining(Operator):
         backend = backends[backend_id]
 
         # Validate data with backend-specific validation
-        is_valid, message = backend.validate_data(settings.training_data_path)
+        is_valid, message = backend.validate_data(normalized_data_path)
         if not is_valid:
             self.report({'ERROR'}, message)
             return {'CANCELLED'}
 
+        try:
+            extra_args = (
+                shlex.split(settings.training_extra_args)
+                if settings.training_extra_args
+                else []
+            )
+        except ValueError as exc:
+            self.report({'ERROR'}, f"Invalid training extra arguments: {exc}")
+            return {'CANCELLED'}
+
         # Build config
         config = TrainingConfig(
-            data_path=settings.training_data_path,
-            output_path=settings.training_output_path,
+            data_path=normalized_data_path,
+            output_path=normalized_output_path,
             iterations=settings.training_iterations,
             save_iterations=self._get_save_iterations(settings),
             white_background=settings.training_white_background,
@@ -105,7 +122,7 @@ class GSCAPTURE_OT_StartTraining(Operator):
             densify_from_iter=settings.densify_from_iter,
             densify_until_iter=settings.densify_until_iter,
             densification_interval=settings.densification_interval,
-            extra_args=settings.training_extra_args.split() if settings.training_extra_args else [],
+            extra_args=extra_args,
         )
 
         # Start training
@@ -185,7 +202,7 @@ class GSCAPTURE_OT_StartTraining(Operator):
         """Perform pre-flight validation before starting training.
 
         Returns:
-            tuple: (success, errors_list, warnings_list)
+            tuple: (success, errors_list, warnings_list, normalized_data_path, normalized_output_path)
         """
         settings = context.scene.gs_capture_settings
         errors = []
@@ -196,6 +213,8 @@ class GSCAPTURE_OT_StartTraining(Operator):
         # Normalize paths
         data_path = normalize_path(settings.training_data_path)
         output_path = normalize_path(settings.training_output_path)
+        normalized_data = data_path
+        normalized_output = output_path
 
         # Validate data path exists
         is_valid, normalized_data, error_msg = validate_directory(data_path, must_exist=True)
@@ -203,7 +222,7 @@ class GSCAPTURE_OT_StartTraining(Operator):
             errors.append(get_error_message('invalid_data_path',
                                             data_path=data_path,
                                             error=error_msg))
-            return False, errors, warnings
+            return False, errors, warnings, normalized_data, normalized_output
 
         # Validate output path can be created
         is_valid, normalized_output, error_msg = validate_directory(output_path, create=True)
@@ -211,7 +230,7 @@ class GSCAPTURE_OT_StartTraining(Operator):
             errors.append(get_error_message('invalid_output_path',
                                             output_path=output_path,
                                             error=error_msg))
-            return False, errors, warnings
+            return False, errors, warnings, normalized_data, normalized_output
 
         # Validate folder structure matches backend requirements
         structure_valid, missing_required, missing_optional = validate_structure(
@@ -256,7 +275,7 @@ class GSCAPTURE_OT_StartTraining(Operator):
         settings_warnings = self._get_settings_suggestions(context)
         warnings.extend(settings_warnings)
 
-        return len(errors) == 0, errors, warnings
+        return len(errors) == 0, errors, warnings, normalized_data, normalized_output
 
     def _get_settings_suggestions(self, context):
         """Compare current export settings with recommended settings for the backend.

@@ -51,7 +51,7 @@ training:
   implementation: "original"
   
   # Paths to implementations (auto-detected if empty)
-  gaussian_splatting_path: ""  # e.g., "/home/user/gaussian-splatting"
+  gaussian_splatting_path: ""  # e.g., "~/gaussian-splatting" or "<path-to>/gaussian-splatting"
   nerfstudio_path: ""
   gsplat_path: ""
   

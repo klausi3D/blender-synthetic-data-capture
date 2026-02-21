@@ -9,6 +9,7 @@ import time
 import os
 import sys
 import re
+import signal
 from typing import Optional, Callable
 from queue import Queue, Empty
 
@@ -122,8 +123,15 @@ class TrainingProcess:
             }
 
             if sys.platform == 'win32':
-                # CREATE_NO_WINDOW prevents console popup
-                kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+                # CREATE_NO_WINDOW prevents console popup.
+                # CREATE_NEW_PROCESS_GROUP allows terminating the full process tree later.
+                creationflags = subprocess.CREATE_NO_WINDOW
+                if hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
+                    creationflags |= subprocess.CREATE_NEW_PROCESS_GROUP
+                kwargs['creationflags'] = creationflags
+            elif hasattr(os, "setsid"):
+                # Start in a new session so we can signal the whole process group on stop().
+                kwargs['preexec_fn'] = os.setsid
 
             self._process = subprocess.Popen(cmd, **kwargs)
         except Exception as e:
@@ -150,15 +158,62 @@ class TrainingProcess:
         """Stop training process."""
         self._stop_requested = True
 
-        if self._process:
-            self._process.terminate()
+        if self._process and self._process.poll() is None:
             try:
-                self._process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self._process.kill()
+                if sys.platform == 'win32':
+                    self._stop_windows_process_tree()
+                else:
+                    self._stop_unix_process_group()
+            except Exception:
+                # Fallback to parent-only termination if process-group stop fails.
+                self._process.terminate()
+                try:
+                    self._process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self._process.kill()
 
         self._progress.status = TrainingStatus.CANCELLED
         # NOTE: Don't clear _active_process - user should click Close to clear
+
+    def _stop_unix_process_group(self) -> None:
+        """Terminate the full Unix process group for the training job."""
+        if not self._process:
+            return
+
+        try:
+            pgid = os.getpgid(self._process.pid)
+        except ProcessLookupError:
+            return
+
+        os.killpg(pgid, signal.SIGTERM)
+        try:
+            self._process.wait(timeout=5)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+
+        os.killpg(pgid, signal.SIGKILL)
+        try:
+            self._process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self._process.kill()
+
+    def _stop_windows_process_tree(self) -> None:
+        """Terminate the full Windows process tree for the training job."""
+        if not self._process:
+            return
+
+        subprocess.run(
+            ["taskkill", "/PID", str(self._process.pid), "/T", "/F"],
+            check=False,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+        try:
+            self._process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self._process.kill()
 
     def _read_output(self) -> None:
         """Read process output in background thread."""
