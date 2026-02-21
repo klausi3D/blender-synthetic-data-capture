@@ -51,6 +51,7 @@ from ..utils.materials import override_materials, restore_materials
 from ..utils.checkpoint import (
     save_checkpoint,
     load_checkpoint,
+    validate_checkpoint,
     clear_checkpoint,
     create_checkpoint,
     get_checkpoint_path,
@@ -745,6 +746,67 @@ class GSCAPTURE_OT_capture_selected(Operator):
                 missing.append(label)
         return missing
 
+    def _build_checkpoint_file_specs(self, settings, image_ext):
+        """Build expected output filenames used to validate checkpoint resume."""
+        specs = [
+            {
+                "label": "Image",
+                "directory": self._images_path,
+                "template": f"image_{{idx:04d}}.{image_ext}",
+            }
+        ]
+
+        if settings.export_depth:
+            specs.append(
+                {
+                    "label": "Depth",
+                    "directory": self._depth_path,
+                    "template": f"depth_{{idx:04d}}.{self._depth_output_extension()}",
+                }
+            )
+
+        if settings.export_normals:
+            specs.append(
+                {
+                    "label": "Normal",
+                    "directory": self._normals_path,
+                    "template": "normal_{idx:04d}.exr",
+                }
+            )
+
+        if settings.export_masks:
+            if settings.mask_source == 'ALPHA':
+                if settings.mask_format == 'GSL':
+                    mask_template = f"image_{{idx:04d}}.{image_ext}.png"
+                else:
+                    mask_template = "mask_{idx:04d}.png"
+            else:
+                mask_template = f"mask_{{idx:04d}}.{self._object_index_mask_extension()}"
+
+            specs.append(
+                {
+                    "label": "Mask",
+                    "directory": self._masks_path,
+                    "template": mask_template,
+                }
+            )
+
+        return specs
+
+    def _ensure_directory(self, path, label):
+        """Create directory with user-facing error handling."""
+        try:
+            os.makedirs(path, exist_ok=True)
+        except OSError as exc:
+            self.report({'ERROR'}, f"Failed to create {label}: {exc}")
+            return False
+
+        if not os.path.isdir(path):
+            self.report({'ERROR'}, f"{label} exists but is not a directory: {path}")
+            return False
+
+        return True
+
     def _shutdown_checkpoint_writer(self, timeout=None):
         if self._checkpoint_writer:
             self._checkpoint_writer.stop(timeout=timeout)
@@ -891,6 +953,7 @@ class GSCAPTURE_OT_capture_selected(Operator):
         if not self._validate_output_paths(settings, image_ext):
             restore_render_settings()
             return {'CANCELLED'}
+        checkpoint_file_specs = self._build_checkpoint_file_specs(settings, image_ext)
 
         # Check for checkpoint resume
         settings_hash = calculate_settings_hash(settings, context.scene)
@@ -919,20 +982,46 @@ class GSCAPTURE_OT_capture_selected(Operator):
                             self.report({'WARNING'}, error)
                         checkpoint = None
                     else:
-                        self.report({'INFO'}, f"Resuming from image {checkpoint['current_index']}")
+                        checkpoint_valid, checkpoint, checkpoint_error = validate_checkpoint(
+                            self._output_path,
+                            settings_hash,
+                            legacy_settings_hash=legacy_settings_hash,
+                            checkpoint_data=checkpoint,
+                            file_specs=checkpoint_file_specs,
+                        )
+                        if not checkpoint_valid:
+                            reason = checkpoint_error or "checkpoint outputs are missing or corrupted"
+                            self.report({'WARNING'}, f"Checkpoint invalid ({reason}). Starting fresh.")
+                            success, error = clear_checkpoint(self._output_path)
+                            if not success and error:
+                                self.report({'WARNING'}, error)
+                            checkpoint = None
+                        else:
+                            self.report({'INFO'}, f"Resuming from image {checkpoint['current_index']}")
                 else:
                     self.report({'WARNING'}, "Settings changed, starting fresh")
                     checkpoint = None
 
-        os.makedirs(self._images_path, exist_ok=True)
+        if not self._ensure_directory(self._output_path, "output directory"):
+            restore_render_settings()
+            return {'CANCELLED'}
+        if not self._ensure_directory(self._images_path, "images directory"):
+            restore_render_settings()
+            return {'CANCELLED'}
 
         # Create additional directories for exports
         if settings.export_depth:
-            os.makedirs(self._depth_path, exist_ok=True)
+            if not self._ensure_directory(self._depth_path, "depth directory"):
+                restore_render_settings()
+                return {'CANCELLED'}
         if settings.export_normals:
-            os.makedirs(self._normals_path, exist_ok=True)
+            if not self._ensure_directory(self._normals_path, "normals directory"):
+                restore_render_settings()
+                return {'CANCELLED'}
         if settings.export_masks:
-            os.makedirs(self._masks_path, exist_ok=True)
+            if not self._ensure_directory(self._masks_path, "masks directory"):
+                restore_render_settings()
+                return {'CANCELLED'}
 
         # Hide non-target objects
         self._hide_non_target_objects(context, selected)
@@ -1256,21 +1345,23 @@ class GSCAPTURE_OT_capture_selected(Operator):
             if not is_valid:
                 export_failures.append(f"COLMAP export failed: path is too long for Windows. {error}")
             else:
-                os.makedirs(colmap_path, exist_ok=True)
-                try:
-                    _, warning = export_colmap_cameras(
-                        self._cameras, colmap_path,
-                        rd.resolution_x, rd.resolution_y,
-                        image_ext=image_ext,
-                        export_binary=settings.export_colmap_binary,
-                        initial_point_count=settings.colmap_initial_point_count,
-                        point_sampling_mode=settings.colmap_point_sampling,
-                        target_objects=self._target_objects,
-                    )
-                    if warning:
-                        self.report({'WARNING'}, warning)
-                except Exception as e:
-                    export_failures.append(f"COLMAP export failed: {e}")
+                if not self._ensure_directory(colmap_path, "COLMAP output directory"):
+                    export_failures.append("COLMAP export failed: unable to create output directory.")
+                else:
+                    try:
+                        _, warning = export_colmap_cameras(
+                            self._cameras, colmap_path,
+                            rd.resolution_x, rd.resolution_y,
+                            image_ext=image_ext,
+                            export_binary=settings.export_colmap_binary,
+                            initial_point_count=settings.colmap_initial_point_count,
+                            point_sampling_mode=settings.colmap_point_sampling,
+                            target_objects=self._target_objects,
+                        )
+                        if warning:
+                            self.report({'WARNING'}, warning)
+                    except Exception as e:
+                        export_failures.append(f"COLMAP export failed: {e}")
 
         if settings.export_transforms_json:
             depth_ext = self._depth_output_extension()

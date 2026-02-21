@@ -111,7 +111,8 @@ def write_colmap_points_binary(points, output_path, colors=None):
 
 def main():
     if len(sys.argv) < 2:
-        capture_dir = r"C:\Projects\GS_Blender\capture"
+        capture_dir = os.path.join(os.getcwd(), "capture")
+        print(f"No capture directory argument provided. Using default: {capture_dir}")
     else:
         capture_dir = sys.argv[1]
 
@@ -167,9 +168,9 @@ def main():
     write_colmap_points_binary(all_points, points_bin_path, colors)
 
     print("Done! Initial point cloud generated.")
-    print(f"\nTo train with LichtFeld Studio:")
-    print(f'  cd C:\\Projects\\GS_Tools\\LichtFeld-Studio\\build')
-    print(f'  .\\LichtFeld-Studio.exe -d "{capture_dir}" -o "{capture_dir}\\output" --strategy mcmc -i 30000')
+    print("\nExample training command (LichtFeld Studio):")
+    print("  cd <LICHTFELD_STUDIO_BUILD_DIR>")
+    print(f'  .\\LichtFeld-Studio.exe -d "{capture_dir}" -o "{os.path.join(capture_dir, "output")}" --strategy mcmc -i 30000')
 
 if __name__ == "__main__":
     main()

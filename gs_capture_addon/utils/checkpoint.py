@@ -175,18 +175,32 @@ def get_missing_images(output_path, total_cameras, extension='png'):
     return missing
 
 
-def validate_checkpoint(output_path, settings_hash, legacy_settings_hash=None):
+def validate_checkpoint(
+    output_path,
+    settings_hash,
+    legacy_settings_hash=None,
+    checkpoint_data=None,
+    file_specs=None,
+):
     """Validate that a checkpoint matches current settings.
 
     Args:
         output_path: Base output directory
         settings_hash: Hash of current capture settings
         legacy_settings_hash: Legacy hash for backward compatibility
+        checkpoint_data: Optional checkpoint dict to validate instead of loading from disk
+        file_specs: Optional list of expected output specs:
+            - label: Human-readable output type name
+            - directory: Folder containing output files
+            - template: Filename template with "{idx}" placeholder
 
     Returns:
         tuple: (is_valid, checkpoint_data or None, error_message or None)
     """
-    checkpoint, error = load_checkpoint(output_path)
+    checkpoint = checkpoint_data
+    error = None
+    if checkpoint is None:
+        checkpoint, error = load_checkpoint(output_path)
 
     if checkpoint is None:
         if error:
@@ -198,15 +212,40 @@ def validate_checkpoint(output_path, settings_hash, legacy_settings_hash=None):
         if not settings_hash_matches(checkpoint, settings_hash, legacy_settings_hash):
             return False, checkpoint, "Settings have changed since checkpoint"
 
-    # Verify some completed images still exist and are valid
+    completed = checkpoint.get('completed_images') or []
+    if not completed:
+        return True, checkpoint, None
+
+    if file_specs:
+        for idx in completed:
+            if not isinstance(idx, int) or idx < 0:
+                return False, checkpoint, f"Invalid completed image index in checkpoint: {idx!r}"
+
+            for spec in file_specs:
+                label = spec.get('label', 'output')
+                directory = spec.get('directory')
+                template = spec.get('template')
+                if not directory or not template:
+                    continue
+
+                expected_name = template.format(idx=idx)
+                expected_path = os.path.join(directory, expected_name)
+                if not os.path.exists(expected_path):
+                    return False, checkpoint, f"{label} output missing for index {idx}: {expected_name}"
+                if os.path.getsize(expected_path) == 0:
+                    return False, checkpoint, f"{label} output is empty for index {idx}: {expected_name}"
+        return True, checkpoint, None
+
+    # Fallback behavior when no detailed file specs are provided.
     images_path = os.path.join(output_path, "images")
-    if checkpoint.get('completed_images'):
-        for idx in checkpoint['completed_images'][:5]:  # Check first 5
-            expected_path = os.path.join(images_path, f"image_{idx:04d}.png")
-            if not os.path.exists(expected_path):
-                return False, checkpoint, "Some completed images are missing"
-            if os.path.getsize(expected_path) == 0:
-                return False, checkpoint, "Some completed images are corrupt (0 bytes)"
+    for idx in completed:
+        if not isinstance(idx, int) or idx < 0:
+            return False, checkpoint, f"Invalid completed image index in checkpoint: {idx!r}"
+        expected_path = os.path.join(images_path, f"image_{idx:04d}.png")
+        if not os.path.exists(expected_path):
+            return False, checkpoint, "Some completed images are missing"
+        if os.path.getsize(expected_path) == 0:
+            return False, checkpoint, "Some completed images are corrupt (0 bytes)"
 
     return True, checkpoint, None
 
