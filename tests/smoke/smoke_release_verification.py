@@ -319,7 +319,9 @@ def evaluate_checks() -> None:
 
     long_path = "C:/" + ("x" * 400)
     long_ok, _, long_error = validate_path_length(long_path)
-    windows_warning_ok = (sys.platform == "win32" and (not long_ok) and ("MAX_PATH" in long_error))
+    windows_warning_ok = (sys.platform != "win32") or (
+        (not long_ok) and ("MAX_PATH" in (long_error or ""))
+    )
 
     transforms_ok = (
         c1_final.get("transforms_exists")

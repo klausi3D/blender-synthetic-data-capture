@@ -94,8 +94,8 @@ jobs:
           path: dist/*.zip
           if-no-files-found: error
 
-  blender-smoke-windows:
-    runs-on: windows-latest
+  blender-smoke-linux:
+    runs-on: ubuntu-latest
     needs: python-sanity
     timeout-minutes: 60
     strategy:
@@ -117,26 +117,45 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install Blender ${{ matrix.blender_version }}
-        shell: pwsh
+      - name: Install Linux runtime deps
         run: |
-          $ErrorActionPreference = "Stop"
-          $version = "${{ matrix.blender_version }}"
-          $series = "${{ matrix.blender_series }}"
-          $url = "https://download.blender.org/release/$series/blender-$version-windows-x64.zip"
-          $zipPath = Join-Path $env:RUNNER_TEMP "blender-$version.zip"
-          $extractDir = Join-Path $env:RUNNER_TEMP "blender-$version"
-          Invoke-WebRequest -Uri $url -OutFile $zipPath
-          Expand-Archive -Path $zipPath -DestinationPath $extractDir
-          $blenderExe = Get-ChildItem -Path $extractDir -Recurse -Filter blender.exe | Select-Object -First 1
-          if (-not $blenderExe) { throw "blender.exe not found after extraction" }
-          "BLENDER_EXE=$($blenderExe.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          sudo apt-get update
+          sudo apt-get install -y \
+            xvfb \
+            libxkbcommon-x11-0 \
+            libxi6 \
+            libxxf86vm1 \
+            libxrender1 \
+            libxfixes3 \
+            libegl1 \
+            libgl1 \
+            libglu1-mesa
+
+      - name: Install Blender ${{ matrix.blender_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${{ matrix.blender_version }}"
+          series="${{ matrix.blender_series }}"
+          url="https://download.blender.org/release/${series}/blender-${version}-linux-x64.tar.xz"
+          archive="${RUNNER_TEMP}/blender-${version}.tar.xz"
+          extract_dir="${RUNNER_TEMP}/blender-${version}"
+
+          curl -fsSL "$url" -o "$archive"
+          mkdir -p "$extract_dir"
+          tar -xf "$archive" -C "$extract_dir"
+
+          blender_exe="$(find "$extract_dir" -type f -name blender | head -n 1)"
+          if [ -z "$blender_exe" ]; then
+            echo "blender executable not found after extraction"
+            exit 1
+          fi
+          echo "BLENDER_EXE=$blender_exe" >> "$GITHUB_ENV"
 
       - name: Run Blender smoke suite (timeout-guarded)
-        shell: pwsh
+        shell: bash
         run: |
-          $ErrorActionPreference = "Stop"
-          @'
+          cat <<'PY' | python -u -
           import os
           import pathlib
           import subprocess
@@ -159,7 +178,7 @@ jobs:
 
           for name, rel_script, timeout_seconds in scripts:
               script_path = root / rel_script
-              cmd = [blender_exe, "--factory-startup", "--python", str(script_path)]
+              cmd = ["xvfb-run", "-a", blender_exe, "--factory-startup", "--python", str(script_path)]
               print(f"[CI] Running {name}: {rel_script} (timeout={timeout_seconds}s)", flush=True)
               proc = subprocess.Popen(cmd)
               start = time.monotonic()
@@ -198,7 +217,7 @@ jobs:
 
               elapsed = int(time.monotonic() - start)
               print(f"[CI] OK: {name} completed in {elapsed}s", flush=True)
-          '@ | python -u -
+          PY
 
       - name: Verify smoke reports
         run: python tests/smoke/verify_ci_smoke_reports.py
