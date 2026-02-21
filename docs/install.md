@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Blender 4.0 or newer
+- Blender 4.5.1 LTS or 5.0.0 (currently validated in CI)
 - Windows recommended for training backend integration
 - Optional: conda environments for training backends
 

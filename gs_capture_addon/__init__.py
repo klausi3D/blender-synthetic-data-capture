@@ -22,7 +22,7 @@ Features:
 bl_info = {
     "name": "Blender Synthetic Data Capture",
     "author": "Alexander Klaus",
-    "version": (2, 2, 1),
+    "version": (2, 2, 2),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar > GS Capture",
     "description": "Synthetic multi-view dataset generator for Gaussian Splatting and NeRF (RGB, depth, normals, masks, COLMAP, transforms.json)",
