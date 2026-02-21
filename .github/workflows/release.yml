@@ -313,6 +313,21 @@ jobs:
           python tools/package_addon.py
           ls -lh dist/
 
+      - name: Generate SHA256 checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          zip_files=(dist/*.zip)
+          if [ ${#zip_files[@]} -eq 0 ]; then
+            echo "No zip files found in dist/"
+            exit 1
+          fi
+          for zip_path in "${zip_files[@]}"; do
+            sha256sum "$zip_path" > "${zip_path}.sha256"
+          done
+          ls -lh dist/*.sha256
+
       - name: Upload release artifact
         uses: actions/upload-artifact@v4
         with:
@@ -320,9 +335,18 @@ jobs:
           path: dist/*.zip
           if-no-files-found: error
 
+      - name: Upload release checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-checksums
+          path: dist/*.zip.sha256
+          if-no-files-found: error
+
       - name: Publish GitHub release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.zip
+          files: |
+            dist/*.zip
+            dist/*.zip.sha256
           generate_release_notes: true
