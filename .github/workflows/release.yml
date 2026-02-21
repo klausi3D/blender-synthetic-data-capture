@@ -159,47 +159,59 @@ jobs:
           if (-not $blenderExe) { throw "blender.exe not found after extraction" }
           "BLENDER_EXE=$($blenderExe.FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
-      - name: Run release smoke verification
+      - name: Run Blender smoke suite (timeout-guarded)
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          & "$env:BLENDER_EXE" --factory-startup --python (Join-Path $pwd "tests/smoke/smoke_release_verification.py")
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          @'
+          import os
+          import pathlib
+          import subprocess
+          import sys
 
-      - name: Run checkpoint-only smoke
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          & "$env:BLENDER_EXE" --factory-startup --python (Join-Path $pwd "tests/smoke/smoke_checkpoint_resume_only.py")
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          blender_exe = os.environ["BLENDER_EXE"]
+          root = pathlib.Path.cwd()
+          timeout_seconds = 480  # Fail fast on hangs while allowing slow runners.
+          scripts = [
+              ("release smoke verification", "tests/smoke/smoke_release_verification.py"),
+              ("checkpoint-only smoke", "tests/smoke/smoke_checkpoint_resume_only.py"),
+              ("object-index mask smoke", "tests/smoke/smoke_object_index_mask.py"),
+              ("coverage edge-case smoke", "tests/smoke/smoke_coverage_edge_cases.py"),
+              ("COLMAP binary smoke", "tests/smoke/smoke_colmap_binary_export.py"),
+              ("import-trained-splat smoke", "tests/smoke/smoke_import_trained_splat.py"),
+          ]
 
-      - name: Run object-index mask smoke
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          & "$env:BLENDER_EXE" --factory-startup --python (Join-Path $pwd "tests/smoke/smoke_object_index_mask.py")
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          for name, rel_script in scripts:
+              script_path = root / rel_script
+              cmd = [blender_exe, "--factory-startup", "--python", str(script_path)]
+              print(f"[CI] Running {name}: {rel_script}")
+              proc = subprocess.Popen(
+                  cmd,
+                  stdout=subprocess.PIPE,
+                  stderr=subprocess.STDOUT,
+                  text=True,
+                  encoding="utf-8",
+                  errors="replace",
+              )
+              try:
+                  output, _ = proc.communicate(timeout=timeout_seconds)
+              except subprocess.TimeoutExpired:
+                  proc.kill()
+                  output, _ = proc.communicate()
+                  if output:
+                      print(output.rstrip())
+                  print(f"[CI] ERROR: {name} timed out after {timeout_seconds}s")
+                  sys.exit(124)
 
-      - name: Run coverage edge-case smoke
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          & "$env:BLENDER_EXE" --factory-startup --python (Join-Path $pwd "tests/smoke/smoke_coverage_edge_cases.py")
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              if output:
+                  print(output.rstrip())
 
-      - name: Run COLMAP binary smoke
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          & "$env:BLENDER_EXE" --factory-startup --python (Join-Path $pwd "tests/smoke/smoke_colmap_binary_export.py")
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              if proc.returncode != 0:
+                  print(f"[CI] ERROR: {name} failed with exit code {proc.returncode}")
+                  sys.exit(proc.returncode)
 
-      - name: Run import-trained-splat smoke
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          & "$env:BLENDER_EXE" --factory-startup --python (Join-Path $pwd "tests/smoke/smoke_import_trained_splat.py")
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+              print(f"[CI] OK: {name} completed")
+          '@ | python -
 
       - name: Verify smoke reports
         run: python tests/smoke/verify_ci_smoke_reports.py
