@@ -75,6 +75,47 @@ jobs:
           print("OK: addon python compile")
           PY
 
+      - name: Validate tracked blend files
+        run: |
+          python - <<'PY'
+          import pathlib
+          import subprocess
+          import sys
+
+          proc = subprocess.run(
+              ["git", "ls-files", "*.blend"],
+              check=True,
+              capture_output=True,
+              text=True,
+          )
+          blend_files = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+
+          if not blend_files:
+              print("OK: no tracked .blend files")
+              raise SystemExit(0)
+
+          bad = []
+          for rel_path in blend_files:
+              path = pathlib.Path(rel_path)
+              try:
+                  with path.open("rb") as handle:
+                      header = handle.read(7)
+              except OSError as exc:
+                  bad.append((rel_path, f"unreadable: {exc}"))
+                  continue
+
+              if header != b"BLENDER":
+                  bad.append((rel_path, f"invalid header: {header!r}"))
+
+          if bad:
+              print("Invalid tracked .blend files detected:")
+              for rel_path, reason in bad:
+                  print(f" - {rel_path}: {reason}")
+              raise SystemExit(1)
+
+          print(f"OK: validated {len(blend_files)} tracked .blend file(s)")
+          PY
+
       - name: Package addon
         run: |
           python tools/package_addon.py
