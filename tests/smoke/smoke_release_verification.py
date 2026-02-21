@@ -11,6 +11,7 @@ from __future__ import annotations
 import glob
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -91,11 +92,12 @@ def first_non_comment_line(path: Path) -> str:
 
 def extract_export_ids(paths: list[str], prefix: str) -> set[str]:
     ids: set[str] = set()
-    stem_prefix = f"{prefix}_"
+    pattern = re.compile(rf"^{re.escape(prefix)}_(\d{{4}})(?:\d{{4}})?$")
     for path in paths:
         stem = Path(path).stem
-        if stem.startswith(stem_prefix):
-            ids.add(stem[len(stem_prefix):])
+        match = pattern.match(stem)
+        if match:
+            ids.add(match.group(1))
     return ids
 
 

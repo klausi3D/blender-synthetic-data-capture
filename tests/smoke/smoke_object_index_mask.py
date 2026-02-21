@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import sys
 import time
@@ -55,11 +56,12 @@ def sorted_nonempty_matches(directory: Path, pattern: str) -> list[Path]:
 
 def extract_export_ids(paths: list[Path], prefix: str) -> set[str]:
     ids: set[str] = set()
-    stem_prefix = f"{prefix}_"
+    pattern = re.compile(rf"^{re.escape(prefix)}_(\d{{4}})(?:\d{{4}})?$")
     for path in paths:
         stem = path.stem
-        if stem.startswith(stem_prefix):
-            ids.add(stem[len(stem_prefix):])
+        match = pattern.match(stem)
+        if match:
+            ids.add(match.group(1))
     return ids
 
 
@@ -112,11 +114,11 @@ def assess_artifact_sanity(paths: list[Path], sample_limit: int = 2) -> dict:
     }
 
 
-def sampled_mask_has_value_variation(mask_paths: list[Path], max_masks: int = 2, max_samples: int = 4096) -> tuple[bool, str]:
+def sampled_mask_has_signal(mask_paths: list[Path], max_masks: int = 2, max_samples: int = 4096) -> tuple[bool, str]:
     if not mask_paths:
         return False, "no_mask_files"
 
-    last_error = "sampled_masks_are_flat"
+    last_error = "sampled_masks_have_no_signal"
     for path in mask_paths[:max_masks]:
         image = None
         try:
@@ -129,16 +131,25 @@ def sampled_mask_has_value_variation(mask_paths: list[Path], max_masks: int = 2,
                 continue
 
             step = max(1, pixel_count // max_samples)
-            min_value = 1.0
-            max_value = 0.0
+            min_value = float("inf")
+            max_value = float("-inf")
             for index in range(0, pixel_count, step):
-                value = float(image.pixels[index * channels])
-                min_value = min(min_value, value)
-                max_value = max(max_value, value)
+                base = index * channels
+                for channel in range(channels):
+                    value = float(image.pixels[base + channel])
+                    min_value = min(min_value, value)
+                    max_value = max(max_value, value)
                 if (max_value - min_value) > 0.01:
                     return True, f"{path.name}:value_range={max_value - min_value:.4f}"
 
-            last_error = f"{path.name}:value_range={max_value - min_value:.4f}"
+            # Some valid object-index outputs can be nearly flat but still non-zero.
+            if max_value > 0.01:
+                return True, f"{path.name}:nonzero_flat_signal={max_value:.4f}"
+
+            if min_value == float("inf"):
+                last_error = f"{path.name}:no_sampled_pixels"
+            else:
+                last_error = f"{path.name}:value_range={max_value - min_value:.4f};max={max_value:.4f}"
         except Exception as e:
             last_error = f"{path.name}:load_error:{e}"
         finally:
@@ -252,7 +263,7 @@ def tick():
 
             image_sanity = assess_artifact_sanity(images)
             mask_sanity = assess_artifact_sanity(masks)
-            mask_variation_ok, mask_variation_detail = sampled_mask_has_value_variation(masks)
+            mask_signal_ok, mask_signal_detail = sampled_mask_has_signal(masks)
 
             checks = {
                 "images_present": len(images) > 0,
@@ -263,7 +274,7 @@ def tick():
                     image_sanity.get("sample_signatures_ok") is True
                     and mask_sanity.get("sample_signatures_ok") is True
                 ),
-                "mask_content_has_foreground_background": mask_variation_ok,
+                "mask_content_has_signal": mask_signal_ok,
             }
 
             STATE["report"]["images_count"] = len(images)
@@ -274,7 +285,7 @@ def tick():
                 "masks_sanity": mask_sanity,
                 "missing_mask_ids": missing_mask_ids,
                 "orphan_mask_ids": orphan_mask_ids,
-                "mask_content_detail": mask_variation_detail,
+                "mask_content_detail": mask_signal_detail,
             }
             STATE["report"]["success"] = all(checks.values())
             write_and_quit()

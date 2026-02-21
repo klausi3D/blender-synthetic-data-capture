@@ -97,7 +97,7 @@ def main() -> int:
         "mask_count_matches_images",
         "mask_ids_match_images",
         "artifact_signatures_valid",
-        "mask_content_has_foreground_background",
+        "mask_content_has_signal",
     ]
     for key in required_object_index_checks:
         if object_index_checks.get(key) is not True:
