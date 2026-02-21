@@ -170,6 +170,9 @@ jobs:
           import sys
           import time
 
+          HEARTBEAT_SECONDS = 30
+          POLL_SECONDS = 5
+
           blender_exe = os.environ["BLENDER_EXE"]
           root = pathlib.Path.cwd()
           scripts = [
@@ -180,6 +183,16 @@ jobs:
               ("COLMAP binary smoke", "tests/smoke/smoke_colmap_binary_export.py", 600),
               ("import-trained-splat smoke", "tests/smoke/smoke_import_trained_splat.py", 600),
           ]
+
+          def emit_new_output(text, emitted_chars):
+              if not text:
+                  return emitted_chars
+              if emitted_chars > len(text):
+                  emitted_chars = 0
+              new_text = text[emitted_chars:]
+              if new_text:
+                  print(new_text, end="" if new_text.endswith("\n") else "\n", flush=True)
+              return len(text)
 
           for name, rel_script, timeout_seconds in scripts:
               script_path = root / rel_script
@@ -197,33 +210,33 @@ jobs:
               start = time.monotonic()
               last_heartbeat = start
               timed_out = False
+              emitted_chars = 0
               while True:
-                  line = proc.stdout.readline() if proc.stdout else ""
-                  if line:
-                      print(line.rstrip(), flush=True)
-                  if proc.poll() is not None:
-                      # Flush any remaining buffered output.
-                      if proc.stdout:
-                          for tail in proc.stdout:
-                              print(tail.rstrip(), flush=True)
+                  try:
+                      output, _ = proc.communicate(timeout=POLL_SECONDS)
+                      emitted_chars = emit_new_output(output, emitted_chars)
                       break
-                  if (time.monotonic() - start) > timeout_seconds:
-                      timed_out = True
-                      proc.kill()
-                      if proc.stdout:
-                          for tail in proc.stdout:
-                              print(tail.rstrip(), flush=True)
-                      break
-                  now = time.monotonic()
-                  if (now - last_heartbeat) >= 30:
-                      elapsed = int(now - start)
-                      print(
-                          f"[CI] {name} still running... elapsed={elapsed}s (timeout={timeout_seconds}s)",
-                          flush=True,
-                      )
-                      last_heartbeat = now
-                  if not line:
-                      time.sleep(0.1)
+                  except subprocess.TimeoutExpired as exc:
+                      partial = exc.output or ""
+                      if isinstance(partial, bytes):
+                          partial = partial.decode("utf-8", errors="replace")
+                      emitted_chars = emit_new_output(partial, emitted_chars)
+
+                      now = time.monotonic()
+                      elapsed = now - start
+                      if elapsed > timeout_seconds:
+                          timed_out = True
+                          proc.kill()
+                          output, _ = proc.communicate()
+                          emitted_chars = emit_new_output(output, emitted_chars)
+                          break
+
+                      if (now - last_heartbeat) >= HEARTBEAT_SECONDS:
+                          print(
+                              f"[CI] {name} still running... elapsed={int(elapsed)}s (timeout={timeout_seconds}s)",
+                              flush=True,
+                          )
+                          last_heartbeat = now
 
               if timed_out:
                   print(f"[CI] ERROR: {name} timed out after {timeout_seconds}s", flush=True)
