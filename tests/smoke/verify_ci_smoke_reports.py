@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 
@@ -17,6 +16,42 @@ def load_report(path: Path) -> dict:
         raise FileNotFoundError(f"Missing report: {path}")
     with path.open("r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def verify_windows_path_requirement(release_report: dict, failures: list[str]) -> None:
+    checks = release_report.get("checks", {})
+    platform_name = release_report.get("environment", {}).get("platform")
+    requirement = release_report.get("platform_requirements", {}).get("windows_path_warnings")
+
+    if not isinstance(requirement, dict):
+        failures.append("release report missing platform_requirements.windows_path_warnings")
+        return
+
+    required = requirement.get("required")
+    status = requirement.get("status")
+    result = checks.get("windows_path_warnings")
+
+    if required is True:
+        if platform_name != "win32":
+            failures.append(
+                f"release platform mismatch: windows_path_warnings marked required on {platform_name!r}"
+            )
+        if status != "required":
+            failures.append("release windows_path_warnings status should be 'required'")
+        if result is not True:
+            failures.append("release check failed: windows_path_warnings (required on Windows)")
+        return
+
+    if required is False:
+        if platform_name == "win32":
+            failures.append("release platform mismatch: windows_path_warnings skipped on win32")
+        if status != "skipped_non_windows":
+            failures.append("release windows_path_warnings status should be 'skipped_non_windows'")
+        if result is not None:
+            failures.append("release windows_path_warnings should be null when skipped on non-Windows")
+        return
+
+    failures.append("release windows_path_warnings requirement must be explicit boolean")
 
 
 def main() -> int:
@@ -38,13 +73,13 @@ def main() -> int:
         "mask_export_alpha_object_index",
         "depth_export",
         "normal_export",
-        "windows_path_warnings",
         "colmap_loads_in_3dgs_inferred",
         "transforms_json_works_inferred",
     ]
     for key in required_release_checks:
         if checks.get(key) is not True:
             failures.append(f"release check failed: {key}")
+    verify_windows_path_requirement(release_report, failures)
 
     if checkpoint_report.get("errors"):
         failures.append("checkpoint-only report contains errors")
@@ -55,6 +90,26 @@ def main() -> int:
         failures.append("object-index-only report contains errors")
     if object_index_report.get("success") is not True:
         failures.append("object-index-only smoke test failed")
+    object_index_checks = object_index_report.get("checks", {})
+    object_index_details = object_index_report.get("details", {})
+    required_object_index_checks = [
+        "images_present",
+        "masks_present",
+        "mask_count_matches_images",
+        "mask_ids_match_images",
+        "artifact_signatures_valid",
+        "mask_content_has_signal",
+    ]
+    for key in required_object_index_checks:
+        if object_index_checks.get(key) is not True:
+            failures.append(f"object-index check failed: {key}")
+    mask_content_check = object_index_details.get("mask_content_check", {})
+    if not isinstance(mask_content_check, dict):
+        failures.append("object-index details missing mask_content_check metadata")
+    else:
+        status = mask_content_check.get("status")
+        if status not in {"required_png", "skipped_exr"}:
+            failures.append("object-index mask_content_check status must be required_png or skipped_exr")
 
     if coverage_edge_report.get("errors"):
         failures.append("coverage-edge report contains errors")
@@ -114,7 +169,7 @@ def main() -> int:
     print("Smoke verification passed.")
     print(f"- release checks: {checks}")
     print(f"- checkpoint-only success: {checkpoint_report.get('success')}")
-    print(f"- object-index-only success: {object_index_report.get('success')}")
+    print(f"- object-index-only checks: {object_index_checks}")
     print(f"- coverage-edge checks: {coverage_checks}")
     print(f"- colmap-binary checks: {binary_checks}")
     print(f"- import-splat checks: {import_checks}")

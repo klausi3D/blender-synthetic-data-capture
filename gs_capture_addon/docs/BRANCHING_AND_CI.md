@@ -23,13 +23,13 @@
 
 Workflow file: `.github/workflows/ci.yml`
 
-It runs on push/PR to `main` and `release/**`:
+It runs on push/PR to `master`, `main`, and `release/**`:
 
 1. Python sanity checks:
 - compile all addon Python files
 - package addon zip (`tools/package_addon.py`)
 
-2. Blender smoke tests on Windows (Blender matrix: 4.5.1 and 5.0.0):
+2. Blender smoke tests on Linux (Ubuntu) via `xvfb` (Blender matrix: 4.5.1 and 5.0.0):
 - `tests/smoke/smoke_release_verification.py`
 - `tests/smoke/smoke_checkpoint_resume_only.py`
 - `tests/smoke/smoke_object_index_mask.py`
@@ -66,7 +66,8 @@ Set branch protection on `release/4.5-lts` and `main`:
 
 1. Require status checks:
 - `python-sanity`
-- `blender-smoke-windows`
+- `blender-smoke-linux (4.5.1)`
+- `blender-smoke-linux (5.0.0)`
 
 2. Require pull request reviews.
 3. Restrict direct pushes.

@@ -11,6 +11,7 @@ from __future__ import annotations
 import glob
 import json
 import os
+import re
 import shutil
 import sys
 import time
@@ -40,6 +41,7 @@ STATE = {
         "timeline": [],
         "cases": {},
         "checks": {},
+        "platform_requirements": {},
         "errors": [],
     },
 }
@@ -75,6 +77,125 @@ def count_non_comment_lines(path: Path) -> int:
             if line and not line.startswith("#"):
                 count += 1
     return count
+
+
+def first_non_comment_line(path: Path) -> str:
+    if not path.exists():
+        return ""
+    with path.open("r", encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#"):
+                return line
+    return ""
+
+
+def extract_export_ids(paths: list[str], prefix: str) -> set[str]:
+    ids: set[str] = set()
+    pattern = re.compile(rf"^{re.escape(prefix)}_(\d{{4}})(?:\d{{4}})?$")
+    for path in paths:
+        stem = Path(path).stem
+        match = pattern.match(stem)
+        if match:
+            ids.add(match.group(1))
+    return ids
+
+
+def validate_export_file_signature(path: Path) -> tuple[bool, str]:
+    try:
+        with path.open("rb") as f:
+            header = f.read(32)
+    except OSError as e:
+        return False, f"io_error:{e}"
+
+    suffix = path.suffix.lower()
+    if suffix == ".png":
+        if len(header) < 24:
+            return False, "png_header_too_short"
+        if header[:8] != b"\x89PNG\r\n\x1a\n":
+            return False, "png_signature_missing"
+        if header[12:16] != b"IHDR":
+            return False, "png_ihdr_missing"
+        width = int.from_bytes(header[16:20], "big")
+        height = int.from_bytes(header[20:24], "big")
+        if width <= 0 or height <= 0:
+            return False, "png_invalid_dimensions"
+        return True, ""
+
+    if suffix == ".exr":
+        if len(header) < 4 or header[:4] != b"\x76\x2f\x31\x01":
+            return False, "exr_signature_missing"
+        return True, ""
+
+    return False, f"unsupported_extension:{suffix}"
+
+
+def assess_artifact_sanity(paths: list[str], sample_limit: int = 2) -> dict:
+    samples = []
+    sample_errors = []
+    for sample_path in paths[:sample_limit]:
+        path = Path(sample_path)
+        signature_ok, signature_error = validate_export_file_signature(path)
+        sample = {"file": path.name, "signature_ok": signature_ok}
+        if not signature_ok:
+            sample["error"] = signature_error
+            sample_errors.append(f"{path.name}:{signature_error}")
+        samples.append(sample)
+
+    return {
+        "count": len(paths),
+        "sample_checked": len(samples),
+        "sample_signatures_ok": bool(samples) and not sample_errors,
+        "sample_errors": sample_errors,
+        "samples": samples,
+    }
+
+
+def looks_like_colmap_camera_line(line: str) -> bool:
+    parts = line.split()
+    return len(parts) >= 5 and parts[0].isdigit() and parts[2].isdigit() and parts[3].isdigit()
+
+
+def looks_like_colmap_image_line(line: str) -> bool:
+    parts = line.split()
+    return len(parts) >= 10 and parts[0].isdigit() and parts[8].isdigit()
+
+
+def validate_transforms_frames(frames: object) -> dict:
+    result = {
+        "frame_count": 0,
+        "frame_list_ok": False,
+        "sample_frame_schema_ok": False,
+        "sample_frame_error": "",
+    }
+    if not isinstance(frames, list):
+        result["sample_frame_error"] = "frames_is_not_list"
+        return result
+
+    result["frame_count"] = len(frames)
+    result["frame_list_ok"] = True
+    if not frames:
+        result["sample_frame_error"] = "frames_empty"
+        return result
+
+    first = frames[0]
+    if not isinstance(first, dict):
+        result["sample_frame_error"] = "first_frame_not_object"
+        return result
+
+    file_path = first.get("file_path")
+    matrix = first.get("transform_matrix")
+    matrix_ok = (
+        isinstance(matrix, list)
+        and len(matrix) == 4
+        and all(isinstance(row, list) and len(row) == 4 for row in matrix)
+    )
+    file_path_ok = isinstance(file_path, str) and bool(file_path.strip())
+    if file_path_ok and matrix_ok:
+        result["sample_frame_schema_ok"] = True
+    else:
+        result["sample_frame_error"] = "first_frame_schema_invalid"
+    return result
 
 
 def pick_fast_engine(scene) -> None:
@@ -232,16 +353,44 @@ def collect_case1_results() -> None:
         nonempty_files(str(out_dir / "masks" / "mask_*.exr"))
     )
 
+    image_ids = extract_export_ids(images, "image")
+    depth_ids = extract_export_ids(depth, "depth")
+    normal_ids = extract_export_ids(normals, "normal")
+    mask_ids = extract_export_ids(masks, "mask")
+
+    artifact_sanity = {
+        "images": assess_artifact_sanity(images),
+        "depth": assess_artifact_sanity(depth),
+        "normals": assess_artifact_sanity(normals),
+        "object_index_masks": assess_artifact_sanity(masks),
+    }
+    id_alignment = {
+        "depth_covers_images": bool(image_ids) and image_ids.issubset(depth_ids),
+        "normals_cover_images": bool(image_ids) and image_ids.issubset(normal_ids),
+        "masks_cover_images": bool(image_ids) and image_ids.issubset(mask_ids),
+        "depth_missing_image_ids": sorted(image_ids - depth_ids),
+        "normal_missing_image_ids": sorted(image_ids - normal_ids),
+        "mask_missing_image_ids": sorted(image_ids - mask_ids),
+    }
+
     transforms_path = out_dir / "transforms.json"
     transforms_ok = False
     transforms_frames = 0
+    transforms_sample_frame_schema_ok = False
     transforms_error = ""
     if transforms_path.exists():
         try:
             data = json.loads(transforms_path.read_text(encoding="utf-8"))
             frames = data.get("frames", [])
-            transforms_frames = len(frames)
-            transforms_ok = isinstance(frames, list) and transforms_frames > 0
+            transforms_detail = validate_transforms_frames(frames)
+            transforms_frames = transforms_detail["frame_count"]
+            transforms_sample_frame_schema_ok = transforms_detail["sample_frame_schema_ok"]
+            transforms_ok = (
+                transforms_detail["frame_list_ok"]
+                and transforms_frames > 0
+                and transforms_sample_frame_schema_ok
+            )
+            transforms_error = transforms_detail["sample_frame_error"]
         except Exception as e:
             transforms_error = str(e)
 
@@ -255,6 +404,12 @@ def collect_case1_results() -> None:
         "images_lines": count_non_comment_lines(images_txt),
         "points3D_lines": count_non_comment_lines(points3d_txt),
     }
+    first_camera_line = first_non_comment_line(cameras_txt)
+    first_image_line = first_non_comment_line(images_txt)
+    colmap_text_sanity = {
+        "camera_line_schema_ok": looks_like_colmap_camera_line(first_camera_line),
+        "image_line_schema_ok": looks_like_colmap_image_line(first_image_line),
+    }
 
     case = {
         "output_dir": str(out_dir),
@@ -266,9 +421,13 @@ def collect_case1_results() -> None:
         "transforms_exists": transforms_path.exists(),
         "transforms_ok": transforms_ok,
         "transforms_frames": transforms_frames,
+        "transforms_sample_frame_schema_ok": transforms_sample_frame_schema_ok,
         "transforms_error": transforms_error,
         "colmap_present": colmap_present,
         "colmap_counts": colmap_counts,
+        "colmap_text_sanity": colmap_text_sanity,
+        "artifact_sanity": artifact_sanity,
+        "id_alignment": id_alignment,
     }
     STATE["report"]["cases"]["case1_final"] = case
 
@@ -296,10 +455,21 @@ def collect_case2_results() -> None:
     out_dir = Path(STATE["case2_dir"])
     images = nonempty_files(str(out_dir / "images" / "image_*.png"))
     masks = nonempty_files(str(out_dir / "masks" / "mask_*.png"))
+    image_ids = extract_export_ids(images, "image")
+    mask_ids = extract_export_ids(masks, "mask")
+    artifact_sanity = {
+        "images": assess_artifact_sanity(images),
+        "alpha_masks": assess_artifact_sanity(masks),
+    }
     case = {
         "output_dir": str(out_dir),
         "images_count": len(images),
         "alpha_masks_count": len(masks),
+        "artifact_sanity": artifact_sanity,
+        "id_alignment": {
+            "masks_cover_images": bool(image_ids) and image_ids.issubset(mask_ids),
+            "mask_missing_image_ids": sorted(image_ids - mask_ids),
+        },
     }
     STATE["report"]["cases"]["case2_final"] = case
 
@@ -317,37 +487,75 @@ def evaluate_checks() -> None:
         and c1_final.get("images_count", 0) >= STATE["case1_target_images"]
     )
 
-    long_path = "C:/" + ("x" * 400)
-    long_ok, _, long_error = validate_path_length(long_path)
-    windows_warning_ok = (sys.platform != "win32") or (
-        (not long_ok) and ("MAX_PATH" in (long_error or ""))
-    )
+    is_windows = sys.platform == "win32"
+    if is_windows:
+        long_path = "C:/" + ("x" * 400)
+        long_ok, _, long_error = validate_path_length(long_path)
+        windows_warning_ok: bool | None = (not long_ok) and ("MAX_PATH" in (long_error or ""))
+        windows_path_requirement = {
+            "required": True,
+            "status": "required",
+            "result": windows_warning_ok,
+            "detail": long_error,
+        }
+    else:
+        windows_warning_ok = None
+        windows_path_requirement = {
+            "required": False,
+            "status": "skipped_non_windows",
+            "result": None,
+            "detail": "validate_path_length MAX_PATH behavior is Windows-only",
+        }
 
     transforms_ok = (
         c1_final.get("transforms_exists")
         and c1_final.get("transforms_ok")
         and c1_final.get("transforms_frames", 0) >= STATE["case1_target_images"]
+        and c1_final.get("transforms_sample_frame_schema_ok") is True
     )
 
     colmap_ok = (
         c1_final.get("colmap_present")
         and c1_final.get("colmap_counts", {}).get("cameras_lines", 0) > 0
         and c1_final.get("colmap_counts", {}).get("images_lines", 0) > 0
+        and c1_final.get("colmap_text_sanity", {}).get("camera_line_schema_ok") is True
+        and c1_final.get("colmap_text_sanity", {}).get("image_line_schema_ok") is True
     )
 
+    c1_artifacts = c1_final.get("artifact_sanity", {})
+    c2_artifacts = c2_final.get("artifact_sanity", {})
+
     STATE["report"]["checks"] = {
-        "clean_capture_test": c1_final.get("images_count", 0) >= STATE["case1_target_images"],
+        "clean_capture_test": (
+            c1_final.get("images_count", 0) >= STATE["case1_target_images"]
+            and c1_artifacts.get("images", {}).get("sample_signatures_ok") is True
+        ),
         "mask_export_alpha_object_index": (
             c1_final.get("object_index_masks_count", 0) >= STATE["case1_target_images"]
             and c2_final.get("alpha_masks_count", 0) >= STATE["case2_target_images"]
+            and c1_artifacts.get("object_index_masks", {}).get("sample_signatures_ok") is True
+            and c2_artifacts.get("alpha_masks", {}).get("sample_signatures_ok") is True
+            and c1_final.get("id_alignment", {}).get("masks_cover_images") is True
+            and c2_final.get("id_alignment", {}).get("masks_cover_images") is True
         ),
-        "depth_export": c1_final.get("depth_count", 0) >= STATE["case1_target_images"],
-        "normal_export": c1_final.get("normals_count", 0) >= STATE["case1_target_images"],
+        "depth_export": (
+            c1_final.get("depth_count", 0) >= STATE["case1_target_images"]
+            and c1_artifacts.get("depth", {}).get("sample_signatures_ok") is True
+            and c1_final.get("id_alignment", {}).get("depth_covers_images") is True
+        ),
+        "normal_export": (
+            c1_final.get("normals_count", 0) >= STATE["case1_target_images"]
+            and c1_artifacts.get("normals", {}).get("sample_signatures_ok") is True
+            and c1_final.get("id_alignment", {}).get("normals_cover_images") is True
+        ),
         "checkpoint_resume": checkpoint_resume_ok,
         "windows_path_warnings": windows_warning_ok,
         # Inference based on exported file structure and parseability.
         "colmap_loads_in_3dgs_inferred": colmap_ok,
         "transforms_json_works_inferred": transforms_ok,
+    }
+    STATE["report"]["platform_requirements"] = {
+        "windows_path_warnings": windows_path_requirement,
     }
 
 

@@ -75,16 +75,33 @@ def generate_multi_ring_points(total_count, ring_count, min_elevation, max_eleva
         list: List of Vector points on unit sphere
     """
     points = []
-    cams_per_ring = total_count // ring_count
+    if total_count <= 0:
+        return points
 
-    for ring in range(ring_count):
+    ring_count = max(1, ring_count)
+    # If more rings than cameras are requested, use evenly spaced ring slots.
+    active_ring_count = min(total_count, ring_count)
+
+    if active_ring_count == 1:
+        ring_slots = [(ring_count - 1) * 0.5]
+    else:
+        max_slot = ring_count - 1
+        ring_slots = [
+            round((max_slot * i) / (active_ring_count - 1))
+            for i in range(active_ring_count)
+        ]
+
+    base_per_ring = total_count // active_ring_count
+    remainder = total_count % active_ring_count
+
+    for ring_idx, ring_slot in enumerate(ring_slots):
+        ring_camera_count = base_per_ring + (1 if ring_idx < remainder else 0)
         if ring_count > 1:
-            t = ring / (ring_count - 1)
+            t = ring_slot / float(ring_count - 1)
         else:
             t = 0.5
         elevation = min_elevation + (max_elevation - min_elevation) * t
-        ring_points = generate_ring_points(cams_per_ring, elevation)
-        points.extend(ring_points)
+        points.extend(generate_ring_points(ring_camera_count, elevation))
 
     return points
 

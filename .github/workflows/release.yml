@@ -122,6 +122,7 @@ jobs:
           ls -lh dist/
 
   blender-smoke-linux:
+    name: blender-smoke-linux (${{ matrix.blender_version }})
     runs-on: ubuntu-latest
     needs: python-sanity
     timeout-minutes: 60
@@ -164,11 +165,47 @@ jobs:
           set -euo pipefail
           version="${{ matrix.blender_version }}"
           series="${{ matrix.blender_series }}"
-          url="https://download.blender.org/release/${series}/blender-${version}-linux-x64.tar.xz"
-          archive="${RUNNER_TEMP}/blender-${version}.tar.xz"
+          archive_name="blender-${version}-linux-x64.tar.xz"
+          url="https://download.blender.org/release/${series}/${archive_name}"
+          checksums_url="https://download.blender.org/release/${series}/blender-${version}.sha256"
+          archive="${RUNNER_TEMP}/${archive_name}"
+          checksums_file="${RUNNER_TEMP}/blender-${version}.sha256"
           extract_dir="${RUNNER_TEMP}/blender-${version}"
 
           curl -fsSL "$url" -o "$archive"
+          curl -fsSL "$checksums_url" -o "$checksums_file"
+
+          expected_sha="$(
+            awk -v target="$archive_name" '
+              {
+                gsub(/\r/, "", $0)
+                if (NF < 2) {
+                  next
+                }
+                file = $2
+                sub(/^\*/, "", file)
+                if (file == target) {
+                  print tolower($1)
+                  exit
+                }
+              }
+            ' "$checksums_file"
+          )"
+
+          if [ -z "$expected_sha" ]; then
+            echo "missing checksum entry for ${archive_name} in ${checksums_url}"
+            exit 1
+          fi
+
+          actual_sha="$(sha256sum "$archive" | awk '{print tolower($1)}')"
+          if [ "$actual_sha" != "$expected_sha" ]; then
+            echo "checksum mismatch for ${archive_name}"
+            echo "expected: ${expected_sha}"
+            echo "actual:   ${actual_sha}"
+            exit 1
+          fi
+
+          echo "verified checksum for ${archive_name}"
           mkdir -p "$extract_dir"
           tar -xf "$archive" -C "$extract_dir"
 
@@ -276,6 +313,21 @@ jobs:
           python tools/package_addon.py
           ls -lh dist/
 
+      - name: Generate SHA256 checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          zip_files=(dist/*.zip)
+          if [ ${#zip_files[@]} -eq 0 ]; then
+            echo "No zip files found in dist/"
+            exit 1
+          fi
+          for zip_path in "${zip_files[@]}"; do
+            sha256sum "$zip_path" > "${zip_path}.sha256"
+          done
+          ls -lh dist/*.sha256
+
       - name: Upload release artifact
         uses: actions/upload-artifact@v4
         with:
@@ -283,9 +335,18 @@ jobs:
           path: dist/*.zip
           if-no-files-found: error
 
+      - name: Upload release checksums
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-checksums
+          path: dist/*.zip.sha256
+          if-no-files-found: error
+
       - name: Publish GitHub release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.zip
+          files: |
+            dist/*.zip
+            dist/*.zip.sha256
           generate_release_notes: true

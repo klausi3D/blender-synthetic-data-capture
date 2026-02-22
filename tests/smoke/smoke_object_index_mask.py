@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import sys
 import time
@@ -27,6 +28,8 @@ STATE = {
         "events": [],
         "images_count": 0,
         "masks_count": 0,
+        "checks": {},
+        "details": {},
         "success": False,
         "errors": [],
     },
@@ -36,6 +39,127 @@ STATE = {
 def log(msg: str) -> None:
     print(f"[GS_OBJMASK] {msg}")
     STATE["report"]["events"].append(msg)
+
+
+def sorted_nonempty_matches(directory: Path, pattern: str) -> list[Path]:
+    if not directory.exists():
+        return []
+    matches = []
+    for path in sorted(directory.glob(pattern)):
+        try:
+            if path.is_file() and path.stat().st_size > 0:
+                matches.append(path)
+        except OSError:
+            continue
+    return matches
+
+
+def extract_export_ids(paths: list[Path], prefix: str) -> set[str]:
+    ids: set[str] = set()
+    pattern = re.compile(rf"^{re.escape(prefix)}_(\d{{4}})(?:\d{{4}})?$")
+    for path in paths:
+        stem = path.stem
+        match = pattern.match(stem)
+        if match:
+            ids.add(match.group(1))
+    return ids
+
+
+def validate_export_file_signature(path: Path) -> tuple[bool, str]:
+    try:
+        with path.open("rb") as f:
+            header = f.read(32)
+    except OSError as e:
+        return False, f"io_error:{e}"
+
+    suffix = path.suffix.lower()
+    if suffix == ".png":
+        if len(header) < 24:
+            return False, "png_header_too_short"
+        if header[:8] != b"\x89PNG\r\n\x1a\n":
+            return False, "png_signature_missing"
+        if header[12:16] != b"IHDR":
+            return False, "png_ihdr_missing"
+        width = int.from_bytes(header[16:20], "big")
+        height = int.from_bytes(header[20:24], "big")
+        if width <= 0 or height <= 0:
+            return False, "png_invalid_dimensions"
+        return True, ""
+
+    if suffix == ".exr":
+        if len(header) < 4 or header[:4] != b"\x76\x2f\x31\x01":
+            return False, "exr_signature_missing"
+        return True, ""
+
+    return False, f"unsupported_extension:{suffix}"
+
+
+def assess_artifact_sanity(paths: list[Path], sample_limit: int = 2) -> dict:
+    samples = []
+    sample_errors = []
+    for path in paths[:sample_limit]:
+        signature_ok, signature_error = validate_export_file_signature(path)
+        sample = {"file": path.name, "signature_ok": signature_ok}
+        if not signature_ok:
+            sample["error"] = signature_error
+            sample_errors.append(f"{path.name}:{signature_error}")
+        samples.append(sample)
+
+    return {
+        "count": len(paths),
+        "sample_checked": len(samples),
+        "sample_signatures_ok": bool(samples) and not sample_errors,
+        "sample_errors": sample_errors,
+        "samples": samples,
+    }
+
+
+def sampled_mask_has_signal(mask_paths: list[Path], max_masks: int = 2, max_samples: int = 4096) -> tuple[bool, str]:
+    if not mask_paths:
+        return False, "no_mask_files"
+
+    last_error = "sampled_masks_have_no_signal"
+    for path in mask_paths[:max_masks]:
+        image = None
+        try:
+            image = bpy.data.images.load(str(path), check_existing=False)
+            width, height = image.size
+            pixel_count = int(width) * int(height)
+            channels = max(1, int(getattr(image, "channels", 4)))
+            if pixel_count <= 0:
+                last_error = f"{path.name}:invalid_image_size"
+                continue
+
+            step = max(1, pixel_count // max_samples)
+            min_value = float("inf")
+            max_value = float("-inf")
+            for index in range(0, pixel_count, step):
+                base = index * channels
+                for channel in range(channels):
+                    value = float(image.pixels[base + channel])
+                    min_value = min(min_value, value)
+                    max_value = max(max_value, value)
+                if (max_value - min_value) > 0.01:
+                    return True, f"{path.name}:value_range={max_value - min_value:.4f}"
+
+            # Some valid object-index outputs can be nearly flat but still non-zero.
+            if max_value > 0.01:
+                return True, f"{path.name}:nonzero_flat_signal={max_value:.4f}"
+
+            if min_value == float("inf"):
+                last_error = f"{path.name}:no_sampled_pixels"
+            else:
+                last_error = f"{path.name}:value_range={max_value - min_value:.4f};max={max_value:.4f}"
+        except Exception as e:
+            last_error = f"{path.name}:load_error:{e}"
+        finally:
+            if image is not None:
+                try:
+                    bpy.data.images.remove(image)
+                except Exception:
+                    pass
+
+    return False, last_error
 
 
 def register_addon() -> None:
@@ -128,14 +252,53 @@ def tick():
             if settings.is_rendering:
                 return 0.2
 
-            images = list((OUT_DIR / "images").glob("image_*.png")) if (OUT_DIR / "images").exists() else []
-            masks = []
-            if (OUT_DIR / "masks").exists():
-                masks.extend((OUT_DIR / "masks").glob("mask_*.png"))
-                masks.extend((OUT_DIR / "masks").glob("mask_*.exr"))
+            images = sorted_nonempty_matches(OUT_DIR / "images", "image_*.png")
+            masks = sorted_nonempty_matches(OUT_DIR / "masks", "mask_*.png")
+            masks.extend(sorted_nonempty_matches(OUT_DIR / "masks", "mask_*.exr"))
+
+            image_ids = extract_export_ids(images, "image")
+            mask_ids = extract_export_ids(masks, "mask")
+            missing_mask_ids = sorted(image_ids - mask_ids)
+            orphan_mask_ids = sorted(mask_ids - image_ids)
+
+            image_sanity = assess_artifact_sanity(images)
+            mask_sanity = assess_artifact_sanity(masks)
+            png_masks = [path for path in masks if path.suffix.lower() == ".png"]
+            if png_masks:
+                mask_signal_ok, mask_signal_detail = sampled_mask_has_signal(png_masks)
+                mask_signal_status = "required_png"
+            else:
+                # EXR object-index payloads can be valid while appearing flat via Blender's pixel API.
+                mask_signal_ok = True
+                mask_signal_detail = "skipped_for_exr_masks"
+                mask_signal_status = "skipped_exr"
+
+            checks = {
+                "images_present": len(images) > 0,
+                "masks_present": len(masks) > 0,
+                "mask_count_matches_images": len(masks) == len(images),
+                "mask_ids_match_images": bool(image_ids) and not missing_mask_ids and not orphan_mask_ids,
+                "artifact_signatures_valid": (
+                    image_sanity.get("sample_signatures_ok") is True
+                    and mask_sanity.get("sample_signatures_ok") is True
+                ),
+                "mask_content_has_signal": mask_signal_ok,
+            }
+
             STATE["report"]["images_count"] = len(images)
             STATE["report"]["masks_count"] = len(masks)
-            STATE["report"]["success"] = len(images) > 0 and len(masks) == len(images)
+            STATE["report"]["checks"] = checks
+            STATE["report"]["details"] = {
+                "images_sanity": image_sanity,
+                "masks_sanity": mask_sanity,
+                "missing_mask_ids": missing_mask_ids,
+                "orphan_mask_ids": orphan_mask_ids,
+                "mask_content_check": {
+                    "status": mask_signal_status,
+                    "detail": mask_signal_detail,
+                },
+            }
+            STATE["report"]["success"] = all(checks.values())
             write_and_quit()
             return None
 

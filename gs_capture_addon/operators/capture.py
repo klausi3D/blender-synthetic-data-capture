@@ -187,6 +187,9 @@ class GSCAPTURE_OT_capture_selected(Operator):
     _checkpoint_writer: object
     _checkpoints_enabled: bool
     _pre_capture_validation_result: object
+    _capture_view_layer_name: str
+    _original_view_layer_pass_flags: dict
+    _original_object_pass_indices: dict
 
     preflight_only: BoolProperty(
         name="Validation Summary Only",
@@ -415,6 +418,62 @@ class GSCAPTURE_OT_capture_selected(Operator):
             if obj:
                 obj.hide_render = hide_render
 
+    def _snapshot_view_layer_pass_flags(self, view_layer, settings):
+        """Remember view-layer pass flags that this capture run may modify."""
+        if self._original_view_layer_pass_flags:
+            return
+
+        flags = {}
+        if settings.export_depth and hasattr(view_layer, "use_pass_z"):
+            flags["use_pass_z"] = view_layer.use_pass_z
+        if settings.export_normals and hasattr(view_layer, "use_pass_normal"):
+            flags["use_pass_normal"] = view_layer.use_pass_normal
+        if settings.export_masks and settings.mask_source == 'OBJECT_INDEX':
+            if hasattr(view_layer, "use_pass_object_index"):
+                flags["use_pass_object_index"] = view_layer.use_pass_object_index
+
+        self._original_view_layer_pass_flags = flags
+        self._capture_view_layer_name = view_layer.name if flags else ""
+
+    def _restore_view_layer_pass_flags(self, context):
+        """Restore any view-layer pass flags changed for capture exports."""
+        if not self._original_view_layer_pass_flags:
+            return
+
+        view_layer = context.scene.view_layers.get(self._capture_view_layer_name)
+        if view_layer is None:
+            view_layer = context.view_layer
+
+        for attr, value in self._original_view_layer_pass_flags.items():
+            if hasattr(view_layer, attr):
+                setattr(view_layer, attr, value)
+
+        self._original_view_layer_pass_flags = {}
+        self._capture_view_layer_name = ""
+
+    def _snapshot_target_object_pass_indices(self):
+        """Remember original pass indices before assigning mask IDs."""
+        if self._original_object_pass_indices:
+            return
+
+        self._original_object_pass_indices = {
+            obj.name: obj.pass_index
+            for obj in self._target_objects
+            if obj and hasattr(obj, "pass_index")
+        }
+
+    def _restore_target_object_pass_indices(self, context):
+        """Restore target object pass indices after capture."""
+        if not self._original_object_pass_indices:
+            return
+
+        for obj_name, pass_index in self._original_object_pass_indices.items():
+            obj = context.scene.objects.get(obj_name)
+            if obj and hasattr(obj, "pass_index"):
+                obj.pass_index = pass_index
+
+        self._original_object_pass_indices = {}
+
     def _validate_path_length(self, path, label, report_level):
         is_valid, _, error = validate_path_length(path)
         if not is_valid:
@@ -486,6 +545,7 @@ class GSCAPTURE_OT_capture_selected(Operator):
 
         # Enable required passes
         view_layer = context.view_layer
+        self._snapshot_view_layer_pass_flags(view_layer, settings)
 
         if settings.export_depth:
             view_layer.use_pass_z = True
@@ -498,6 +558,7 @@ class GSCAPTURE_OT_capture_selected(Operator):
         if settings.export_masks and settings.mask_source == 'OBJECT_INDEX':
             view_layer.use_pass_object_index = True
             # Set object indices
+            self._snapshot_target_object_pass_indices()
             for i, obj in enumerate(self._target_objects):
                 obj.pass_index = i + 1
             self._setup_mask_output(tree, render_layers)
@@ -861,6 +922,9 @@ class GSCAPTURE_OT_capture_selected(Operator):
         self._checkpoint_writer = None
         self._checkpoints_enabled = False
         self._pre_capture_validation_result = cached_validation
+        self._capture_view_layer_name = ""
+        self._original_view_layer_pass_flags = {}
+        self._original_object_pass_indices = {}
 
         settings = context.scene.gs_capture_settings
         rd = context.scene.render
@@ -1480,6 +1544,10 @@ class GSCAPTURE_OT_capture_selected(Operator):
             context.scene.eevee.taa_render_samples = self._original_eevee_samples
         if self._original_cycles_samples and hasattr(context.scene, 'cycles'):
             context.scene.cycles.samples = self._original_cycles_samples
+
+        # Shared restore path for both finish() and cancel().
+        self._restore_target_object_pass_indices(context)
+        self._restore_view_layer_pass_flags(context)
 
         # Delete GS cameras
         delete_gs_cameras(context)

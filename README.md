@@ -18,3 +18,7 @@ Blender Synthetic Data Capture is a Blender addon for capturing synthetic traini
 
 - `release/4.5-lts`: stable Blender 4.5.1 LTS branch
 - `feature/blender-5.0-compat`: Blender 5.0 compatibility work
+
+## License
+
+This project is licensed under the MIT License. See `LICENSE`.

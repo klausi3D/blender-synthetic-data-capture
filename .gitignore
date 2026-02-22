@@ -5,6 +5,7 @@
 # ----- Output/Generated Data -----
 # Captured images and training outputs
 capture/
+training_out/
 output/
 outputs/
 gs_capture_addon.zip
