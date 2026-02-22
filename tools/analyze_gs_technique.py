@@ -1,8 +1,30 @@
 """
 Deep analysis of Gaussian Splatting rendering technique in the demo file.
 """
+import argparse
 import bpy
-import json
+import sys
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    """Parse script args passed after Blender's `--` separator."""
+    parser = argparse.ArgumentParser(
+        description=(
+            "Analyze Gaussian-splatting geometry/material setup in a .blend file. "
+            "Run with: blender --background --python tools/analyze_gs_technique.py -- --blend <path>"
+        )
+    )
+    parser.add_argument(
+        "--blend",
+        required=True,
+        help="Path to the .blend file to inspect.",
+    )
+
+    if "--" in argv:
+        argv = argv[argv.index("--") + 1 :]
+    else:
+        argv = []
+    return parser.parse_args(argv)
 
 def analyze_material_shaders():
     """Analyze material shader nodes for GS rendering."""
@@ -164,9 +186,9 @@ This approach works for visualization but is NOT production-quality 3DGS.
 """
     print(summary)
 
-def main():
-    blend_path = "C:/Projects/GS_Blender/Blender-3DGS-4DGS-Viewer-Node/Blender-GSViewer-Node.blend"
-    bpy.ops.wm.open_mainfile(filepath=blend_path)
+def main() -> None:
+    args = parse_args(sys.argv)
+    bpy.ops.wm.open_mainfile(filepath=args.blend)
 
     analyze_geometry_nodes()
     analyze_material_shaders()

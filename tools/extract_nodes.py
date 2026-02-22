@@ -1,11 +1,38 @@
 """
 Extract Geometry Node tree structure from a blend file.
-Run this with Blender: blender --background --python tools/extract_nodes.py
+Run this with Blender:
+blender --background --python tools/extract_nodes.py -- --blend <path> [--output <json_path>]
 """
 
+import argparse
 import bpy
 import json
+from pathlib import Path
 import sys
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    """Parse script args passed after Blender's `--` separator."""
+    parser = argparse.ArgumentParser(
+        description="Extract node-tree structure from a .blend file."
+    )
+    parser.add_argument(
+        "--blend",
+        required=True,
+        help="Path to the .blend file to inspect.",
+    )
+    parser.add_argument(
+        "--output",
+        default="node_tree_dump.json",
+        help="Output JSON path (default: node_tree_dump.json).",
+    )
+
+    if "--" in argv:
+        argv = argv[argv.index("--") + 1 :]
+    else:
+        argv = []
+    return parser.parse_args(argv)
+
 
 def extract_node_tree(node_tree, depth=0):
     """Recursively extract node tree structure."""
@@ -68,12 +95,13 @@ def extract_node_tree(node_tree, depth=0):
     
     return result
 
-def main():
-    # Open the blend file
-    blend_path = "C:/Projects/GS_Blender/Blender-3DGS-4DGS-Viewer-Node/Blender-GSViewer-Node.blend"
-    
-    # Load the file
-    bpy.ops.wm.open_mainfile(filepath=blend_path)
+def main() -> None:
+    args = parse_args(sys.argv)
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Load the .blend file to inspect.
+    bpy.ops.wm.open_mainfile(filepath=args.blend)
     
     print("\n" + "="*80)
     print("BLEND FILE ANALYSIS: Gaussian Splatting Viewer Node")
@@ -144,10 +172,10 @@ def main():
     for nt in bpy.data.node_groups:
         output_data[nt.name] = extract_node_tree(nt)
     
-    with open("C:/Projects/GS_Blender/node_tree_dump.json", "w") as f:
+    with output_path.open("w", encoding="utf-8") as f:
         json.dump(output_data, f, indent=2, default=str)
     
-    print("\n\nFull node tree exported to: node_tree_dump.json")
+    print(f"\n\nFull node tree exported to: {output_path}")
 
 if __name__ == "__main__":
     main()
