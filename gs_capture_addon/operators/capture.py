@@ -1283,10 +1283,12 @@ class GSCAPTURE_OT_capture_selected(Operator):
         self._active_needs_alpha_mask = need_alpha_mask
 
         try:
-            if need_alpha_mask or self._save_manually:
+            context.scene.render.filepath = image_path
+            if self._save_manually:
+                # Manual-save mode is a compatibility fallback for scenes that
+                # cannot use write_still reliably.
                 result = bpy.ops.render.render('INVOKE_DEFAULT')
             else:
-                context.scene.render.filepath = image_path
                 result = bpy.ops.render.render('INVOKE_DEFAULT', write_still=True)
         except Exception as exc:
             self._export_errors = True
@@ -1312,8 +1314,8 @@ class GSCAPTURE_OT_capture_selected(Operator):
         mask_ok = True
 
         try:
-            # For alpha/manual modes we save the render result explicitly after render completes.
-            if need_alpha_mask or self._save_manually:
+            # For manual mode we save the render result explicitly after render completes.
+            if self._save_manually:
                 render_result = bpy.data.images.get('Render Result')
                 if not render_result:
                     self._export_errors = True
@@ -1322,21 +1324,21 @@ class GSCAPTURE_OT_capture_selected(Operator):
 
                 render_result.save_render(filepath=image_path)
 
-                if need_alpha_mask:
-                    if settings.mask_format == 'GSL':
-                        mask_path = f"{self._mask_path_prefix_gsl}{actual_index:04d}{self._mask_path_suffix_gsl}"
-                    else:
-                        mask_path = f"{self._mask_path_prefix}{actual_index:04d}{self._mask_path_suffix}"
-                    try:
-                        mask_success, mask_error = extract_alpha_mask(image_path, mask_path)
-                        if not mask_success:
-                            mask_ok = False
-                            if mask_error:
-                                self.report({'WARNING'}, mask_error)
-                    except Exception as exc:
+            if need_alpha_mask:
+                if settings.mask_format == 'GSL':
+                    mask_path = f"{self._mask_path_prefix_gsl}{actual_index:04d}{self._mask_path_suffix_gsl}"
+                else:
+                    mask_path = f"{self._mask_path_prefix}{actual_index:04d}{self._mask_path_suffix}"
+                try:
+                    mask_success, mask_error = extract_alpha_mask(image_path, mask_path)
+                    if not mask_success:
                         mask_ok = False
-                        self._export_errors = True
-                        self.report({'ERROR'}, f"Failed to save mask {actual_index}: {exc}")
+                        if mask_error:
+                            self.report({'WARNING'}, mask_error)
+                except Exception as exc:
+                    mask_ok = False
+                    self._export_errors = True
+                    self.report({'ERROR'}, f"Failed to save mask {actual_index}: {exc}")
 
             # Verify file was written successfully.
             image_ok = os.path.exists(image_path) and os.path.getsize(image_path) > 0
