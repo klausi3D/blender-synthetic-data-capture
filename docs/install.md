@@ -8,6 +8,9 @@
 
 ## Addon Installation
 
+Use the packaged addon zip named `gs_capture_addon-<version>.zip`.
+Do not use GitHub's auto-generated repository source zip (`blender-synthetic-data-capture-*.zip`), because Blender reports `Modules Installed ()` and no addon entry appears.
+
 1. Open Blender.
 2. Go to `Edit -> Preferences -> Add-ons`.
 3. Click `Install...` and select `gs_capture_addon-<version>.zip`.
