@@ -190,6 +190,10 @@ class GSCAPTURE_OT_capture_selected(Operator):
     _capture_view_layer_name: str
     _original_view_layer_pass_flags: dict
     _original_object_pass_indices: dict
+    _render_in_progress: bool
+    _active_camera_actual_index: int
+    _active_image_path: str
+    _active_needs_alpha_mask: bool
 
     preflight_only: BoolProperty(
         name="Validation Summary Only",
@@ -1215,6 +1219,10 @@ class GSCAPTURE_OT_capture_selected(Operator):
 
         # Start rendering
         self._current_camera_index = 0
+        self._render_in_progress = False
+        self._active_camera_actual_index = -1
+        self._active_image_path = ""
+        self._active_needs_alpha_mask = False
         settings.is_rendering = True
         settings.render_progress = 0.0
 
@@ -1241,15 +1249,169 @@ class GSCAPTURE_OT_capture_selected(Operator):
 
         return {'RUNNING_MODAL'}
 
+    def _is_render_job_running(self):
+        """Best-effort check whether Blender currently runs a render job."""
+        is_job_running = getattr(bpy.app, "is_job_running", None)
+        if callable(is_job_running):
+            try:
+                return bool(is_job_running("RENDER"))
+            except Exception:
+                return False
+        return False
+
+    def _request_render_cancel(self):
+        """Request cancellation of the active render job."""
+        try:
+            bpy.ops.render.cancel()
+        except Exception:
+            pass
+
+    def _start_async_render(self, context, settings):
+        """Start rendering the current camera asynchronously."""
+        actual_index = self._images_to_render[self._current_camera_index]
+        cam = self._cameras[actual_index]
+        context.scene.camera = cam
+
+        # Update output filenames for compositor nodes.
+        self._update_output_filenames(actual_index)
+
+        image_path = f"{self._image_path_prefix}{actual_index:04d}{self._image_path_suffix}"
+        need_alpha_mask = settings.export_masks and settings.mask_source == 'ALPHA'
+
+        self._active_camera_actual_index = actual_index
+        self._active_image_path = image_path
+        self._active_needs_alpha_mask = need_alpha_mask
+
+        try:
+            if need_alpha_mask or self._save_manually:
+                result = bpy.ops.render.render('INVOKE_DEFAULT')
+            else:
+                context.scene.render.filepath = image_path
+                result = bpy.ops.render.render('INVOKE_DEFAULT', write_still=True)
+        except Exception as exc:
+            self._export_errors = True
+            self.report({'ERROR'}, f"Failed to start render {actual_index}: {exc}")
+            return False
+
+        if 'CANCELLED' in set(result):
+            self._export_errors = True
+            self.report({'ERROR'}, f"Render {actual_index} was cancelled before start")
+            return False
+
+        self._render_in_progress = True
+        settings.capture_current_camera = cam.name if cam else ""
+        return True
+
+    def _finalize_completed_render(self, context, settings):
+        """Finalize outputs for the render that just completed."""
+        actual_index = self._active_camera_actual_index
+        image_path = self._active_image_path
+        need_alpha_mask = self._active_needs_alpha_mask
+
+        save_success = False
+        mask_ok = True
+
+        try:
+            # For alpha/manual modes we save the render result explicitly after render completes.
+            if need_alpha_mask or self._save_manually:
+                render_result = bpy.data.images.get('Render Result')
+                if not render_result:
+                    self._export_errors = True
+                    self.report({'ERROR'}, "Render Result not available after render")
+                    return False
+
+                render_result.save_render(filepath=image_path)
+
+                if need_alpha_mask:
+                    if settings.mask_format == 'GSL':
+                        mask_path = f"{self._mask_path_prefix_gsl}{actual_index:04d}{self._mask_path_suffix_gsl}"
+                    else:
+                        mask_path = f"{self._mask_path_prefix}{actual_index:04d}{self._mask_path_suffix}"
+                    try:
+                        mask_success, mask_error = extract_alpha_mask(image_path, mask_path)
+                        if not mask_success:
+                            mask_ok = False
+                            if mask_error:
+                                self.report({'WARNING'}, mask_error)
+                    except Exception as exc:
+                        mask_ok = False
+                        self._export_errors = True
+                        self.report({'ERROR'}, f"Failed to save mask {actual_index}: {exc}")
+
+            # Verify file was written successfully.
+            image_ok = os.path.exists(image_path) and os.path.getsize(image_path) > 0
+            if not image_ok:
+                self._export_errors = True
+                self.report({'WARNING'}, f"Image {actual_index} may not have saved correctly")
+            save_success = image_ok and mask_ok
+
+            # Verify additional outputs written by compositor (depth/normals/masks).
+            if save_success and settings.export_depth:
+                depth_ext = self._depth_output_extension()
+                depth_ok = self._verify_output_file(
+                    self._depth_path,
+                    f"depth_{actual_index:04d}",
+                    depth_ext
+                )
+                if not depth_ok:
+                    save_success = False
+                    self._export_errors = True
+                    self.report({'ERROR'}, f"Depth map {actual_index} may not have saved correctly")
+
+            if save_success and settings.export_normals:
+                normal_ok = self._verify_output_file(
+                    self._normals_path,
+                    f"normal_{actual_index:04d}",
+                    "exr"
+                )
+                if not normal_ok:
+                    save_success = False
+                    self._export_errors = True
+                    self.report({'ERROR'}, f"Normal map {actual_index} may not have saved correctly")
+
+            if save_success and settings.export_masks and settings.mask_source == 'OBJECT_INDEX':
+                mask_ext = self._object_index_mask_extension()
+                mask_ok = self._verify_output_file(
+                    self._masks_path,
+                    f"mask_{actual_index:04d}",
+                    mask_ext
+                )
+                if not mask_ok:
+                    save_success = False
+                    self._export_errors = True
+                    self.report({'ERROR'}, f"Mask {actual_index} may not have saved correctly")
+
+        except Exception as exc:
+            self._export_errors = True
+            self.report({'ERROR'}, f"Failed to finalize image {actual_index}: {exc}")
+            save_success = False
+
+        finally:
+            self._render_in_progress = False
+
+        return save_success
+
     def modal(self, context, event):
         settings = context.scene.gs_capture_settings
 
         if settings.cancel_requested:
+            # If a render job is active, cancel it first and wait for Blender
+            # to finish unwinding before cleaning up operator state.
+            if self._render_in_progress and self._is_render_job_running():
+                settings.current_render_info = "Cancelling current render..."
+                self._request_render_cancel()
+                return {'RUNNING_MODAL'}
             settings.cancel_requested = False
             self.cancel(context)
             return {'CANCELLED'}
 
         if event.type == 'ESC':
+            settings.cancel_requested = True
+            if self._render_in_progress and self._is_render_job_running():
+                settings.current_render_info = "Cancelling current render..."
+                self._request_render_cancel()
+                return {'RUNNING_MODAL'}
+            settings.cancel_requested = False
             self.cancel(context)
             return {'CANCELLED'}
 
@@ -1258,108 +1420,29 @@ class GSCAPTURE_OT_capture_selected(Operator):
         if event.type != 'TIMER':
             return {'PASS_THROUGH'}
 
-        if event.type == 'TIMER':
-            self._drain_checkpoint_writer_errors()
-            if self._current_camera_index >= len(self._images_to_render):
-                self.finish(context)
-                return {'FINISHED'}
+        self._drain_checkpoint_writer_errors()
 
-            # Get actual camera index from render list
-            actual_index = self._images_to_render[self._current_camera_index]
-            cam = self._cameras[actual_index]
-            context.scene.camera = cam
+        if self._current_camera_index >= len(self._images_to_render):
+            self.finish(context)
+            return {'FINISHED'}
 
-            # Update output filenames for compositor nodes
-            self._update_output_filenames(actual_index)
+        # If a render is active, wait for it to finish (or be canceled).
+        if self._render_in_progress:
+            if self._is_render_job_running():
+                return {'RUNNING_MODAL'}
 
-            # Set output path with correct extension for file format
-            image_path = f"{self._image_path_prefix}{actual_index:04d}{self._image_path_suffix}"
+            # Render completed. If user requested cancel while render was active,
+            # honor it before finalizing this frame as completed.
+            if settings.cancel_requested:
+                settings.cancel_requested = False
+                self.cancel(context)
+                return {'CANCELLED'}
 
-            # Render and save
-            save_success = False
-            mask_ok = True
-            need_alpha_mask = settings.export_masks and settings.mask_source == 'ALPHA'
+            actual_index = self._active_camera_actual_index
+            cam = self._cameras[actual_index] if 0 <= actual_index < len(self._cameras) else None
+            save_success = self._finalize_completed_render(context, settings)
 
-            try:
-                # If we need alpha mask, render and then extract from saved file
-                if need_alpha_mask:
-                    bpy.ops.render.render()
-                    render_result = bpy.data.images.get('Render Result')
-                    if render_result:
-                        # Save the image first
-                        render_result.save_render(filepath=image_path)
-
-                        # Extract mask from the saved image file (more reliable than reading render buffer)
-                        if settings.mask_format == 'GSL':
-                            mask_path = f"{self._mask_path_prefix_gsl}{actual_index:04d}{self._mask_path_suffix_gsl}"
-                        else:
-                            mask_path = f"{self._mask_path_prefix}{actual_index:04d}{self._mask_path_suffix}"
-                        # Load the saved image and extract alpha channel
-                        try:
-                            mask_success, mask_error = extract_alpha_mask(image_path, mask_path)
-                            if not mask_success and mask_error:
-                                self.report({'WARNING'}, mask_error)
-                        except Exception as e:
-                            mask_ok = False
-                            self._export_errors = True
-                            self.report({'ERROR'}, f"Failed to save mask {actual_index}: {e}")
-                elif self._save_manually:
-                    bpy.ops.render.render()
-                    render_result = bpy.data.images.get('Render Result')
-                    if render_result:
-                        render_result.save_render(filepath=image_path)
-                else:
-                    context.scene.render.filepath = image_path
-                    bpy.ops.render.render(write_still=True)
-
-                # Verify file was written successfully
-                image_ok = os.path.exists(image_path) and os.path.getsize(image_path) > 0
-                if not image_ok:
-                    self._export_errors = True
-                    self.report({'WARNING'}, f"Image {actual_index} may not have saved correctly")
-                save_success = image_ok and mask_ok
-
-                # Verify additional outputs written by compositor (depth/normals/masks)
-                if save_success and settings.export_depth:
-                    depth_ext = self._depth_output_extension()
-                    depth_ok = self._verify_output_file(
-                        self._depth_path,
-                        f"depth_{actual_index:04d}",
-                        depth_ext
-                    )
-                    if not depth_ok:
-                        save_success = False
-                        self._export_errors = True
-                        self.report({'ERROR'}, f"Depth map {actual_index} may not have saved correctly")
-
-                if save_success and settings.export_normals:
-                    normal_ok = self._verify_output_file(
-                        self._normals_path,
-                        f"normal_{actual_index:04d}",
-                        "exr"
-                    )
-                    if not normal_ok:
-                        save_success = False
-                        self._export_errors = True
-                        self.report({'ERROR'}, f"Normal map {actual_index} may not have saved correctly")
-
-                if save_success and settings.export_masks and settings.mask_source == 'OBJECT_INDEX':
-                    mask_ext = self._object_index_mask_extension()
-                    mask_ok = self._verify_output_file(
-                        self._masks_path,
-                        f"mask_{actual_index:04d}",
-                        mask_ext
-                    )
-                    if not mask_ok:
-                        save_success = False
-                        self._export_errors = True
-                        self.report({'ERROR'}, f"Mask {actual_index} may not have saved correctly")
-
-            except Exception as e:
-                self._export_errors = True
-                self.report({'ERROR'}, f"Failed to save image {actual_index}: {e}")
-
-            # Only update checkpoint if save was successful
+            # Only update checkpoint if save was successful.
             if save_success:
                 self._checkpoint_data['completed_images'].append(actual_index)
                 self._checkpoint_data['current_index'] = self._current_camera_index
@@ -1373,31 +1456,40 @@ class GSCAPTURE_OT_capture_selected(Operator):
                         if not success and error:
                             self.report({'WARNING'}, error)
 
-            # Update progress
+            # Update progress.
             self._current_camera_index += 1
             total_to_render = len(self._images_to_render)
             settings.render_progress = (self._current_camera_index / total_to_render) * 100
             settings.current_render_info = f"Rendering {self._current_camera_index}/{total_to_render}"
 
-            # Update extended progress tracking
+            # Update extended progress tracking.
             settings.capture_current = self._current_camera_index
             elapsed = time.time() - settings.capture_start_time
             settings.capture_elapsed_seconds = elapsed
-            
+
             if self._current_camera_index > 0:
                 settings.capture_rate = self._current_camera_index / elapsed
                 remaining = total_to_render - self._current_camera_index
                 settings.capture_eta_seconds = remaining / settings.capture_rate if settings.capture_rate > 0 else 0
-            
+
             settings.capture_current_camera = cam.name if cam else ""
-            
-            # Update built-in progress bar
+
+            # Update built-in progress bar.
             context.window_manager.progress_update(self._current_camera_index)
-            
-            # Force UI redraw
+
+            # Force UI redraw.
             for area in context.screen.areas:
                 if area.type == 'VIEW_3D':
                     area.tag_redraw()
+            return {'RUNNING_MODAL'}
+
+        # Start next camera render asynchronously.
+        total_to_render = len(self._images_to_render)
+        settings.current_render_info = f"Rendering {self._current_camera_index + 1}/{total_to_render}"
+        if not self._start_async_render(context, settings):
+            settings.cancel_requested = False
+            self.cancel(context)
+            return {'CANCELLED'}
 
         return {'RUNNING_MODAL'}
 
@@ -1497,6 +1589,7 @@ class GSCAPTURE_OT_capture_selected(Operator):
         # Cleanup
         self.cleanup(context)
 
+        self._render_in_progress = False
         settings.is_rendering = False
         settings.cancel_requested = False
         settings.render_progress = 100.0
@@ -1587,6 +1680,7 @@ class GSCAPTURE_OT_capture_selected(Operator):
         context.window_manager.progress_end()
 
         self.cleanup(context)
+        self._render_in_progress = False
         settings.is_rendering = False
         settings.cancel_requested = False
         settings.current_render_info = "Cancelled"

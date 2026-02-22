@@ -56,6 +56,7 @@ class GSCAPTURE_PT_progress_panel(Panel):
 
         # Progress bar
         row = box.row()
+        row.enabled = False
         row.prop(settings, "render_progress", text="")
 
         # Current/Total
