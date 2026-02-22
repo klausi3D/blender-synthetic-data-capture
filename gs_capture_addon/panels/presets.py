@@ -45,77 +45,61 @@ class GSCAPTURE_PT_PresetsPanel(Panel):
             preset = PRESETS[preset_id]
 
             box = layout.box()
-
-            # Preset description
             col = box.column(align=True)
-            col.scale_y = 0.8
+            col.scale_y = 0.85
 
-            # Wrap description text
+            # Compact description preview (max 2 lines).
             words = preset.description.split()
+            desc_lines = []
             line = ""
+            truncated = False
             for word in words:
-                if len(line + word) > 35:
-                    col.label(text=line)
+                if len(line + word) > 44:
+                    desc_lines.append(line.strip())
                     line = word + " "
+                    if len(desc_lines) >= 2:
+                        truncated = True
+                        break
                 else:
                     line += word + " "
-            if line:
-                col.label(text=line.strip())
-
-            # Recommended settings
-            box.separator()
-
-            col = box.column(align=True)
-            col.label(text="Recommended Settings:", icon='INFO')
+            if len(desc_lines) < 2 and line.strip():
+                desc_lines.append(line.strip())
+            for entry in desc_lines:
+                col.label(text=entry)
+            if truncated:
+                col.label(text="...", icon='DOT')
 
             min_cam, max_cam = preset.recommended_cameras
-            col.label(text=f"  Cameras: {min_cam} - {max_cam}")
-
             res_w, res_h = preset.recommended_resolution
-            col.label(text=f"  Resolution: {res_w} x {res_h}")
-
-            col.label(text=f"  Format: {preset.file_format}")
-
-            # Export formats
             exports = []
             if preset.export_colmap:
                 exports.append("COLMAP")
             if preset.export_transforms_json:
                 exports.append("transforms.json")
-            col.label(text=f"  Exports: {', '.join(exports)}")
+            export_text = ", ".join(exports) if exports else "None"
+            col.separator()
+            col.label(
+                text=f"Rec: {min_cam}-{max_cam} cams | {res_w}x{res_h} | {preset.file_format} | {export_text}",
+                icon='SETTINGS',
+            )
 
-            # Website link
+            # Show first note as a compact hint.
+            first_note = ""
+            if isinstance(preset.notes, list) and preset.notes:
+                first_note = str(preset.notes[0]).strip()
+            elif isinstance(preset.notes, str):
+                first_note = preset.notes.strip().splitlines()[0] if preset.notes.strip() else ""
+            if first_note:
+                clipped_note = first_note[:72] + ("..." if len(first_note) > 72 else "")
+                col.label(text=clipped_note, icon='INFO')
+
+            box.separator()
+            actions = box.row(align=True)
+            info_op = actions.operator("gs_capture.preset_info", text="Details", icon='INFO')
+            info_op.preset_id = preset_id
+            actions.operator("gs_capture.compare_presets", text="", icon='PRESET')
             if preset.website:
-                box.separator()
-                row = box.row()
-                row.operator(
-                    "wm.url_open",
-                    text="Documentation",
-                    icon='URL'
-                ).url = preset.website
-
-            # Notes
-            if preset.notes:
-                box.separator()
-                notes_box = box.box()
-                notes_box.scale_y = 0.7
-
-                # Handle notes as list or string
-                if isinstance(preset.notes, list):
-                    for note in preset.notes:
-                        notes_box.label(text=note, icon='INFO')
-                else:
-                    # Wrap notes text (legacy string format)
-                    words = preset.notes.split()
-                    line = ""
-                    for word in words:
-                        if len(line + word) > 40:
-                            notes_box.label(text=line, icon='BLANK1')
-                            line = word + " "
-                        else:
-                            line += word + " "
-                    if line:
-                        notes_box.label(text=line.strip(), icon='BLANK1')
+                actions.operator("wm.url_open", text="", icon='URL').url = preset.website
 
 
 class GSCAPTURE_PT_PresetsQuickSettings(Panel):
@@ -142,49 +126,73 @@ class GSCAPTURE_PT_PresetsQuickSettings(Panel):
 
         preset = PRESETS[preset_id]
 
-        # Compare current vs recommended
-        col = layout.column(align=True)
+        # Compare current vs recommended and show only drift to reduce noise.
+        mismatches = []
 
-        # Camera count
+        # Camera count drift
         current_cameras = settings.camera_count
         min_cam, max_cam = preset.recommended_cameras
+        if not (min_cam <= current_cameras <= max_cam):
+            mismatches.append(("Cameras", str(current_cameras), f"{min_cam}-{max_cam}"))
 
-        row = col.row()
-        row.label(text="Cameras:")
-        if min_cam <= current_cameras <= max_cam:
-            row.label(text=f"{current_cameras}", icon='CHECKMARK')
-        else:
-            row.label(text=f"{current_cameras}", icon='ERROR')
-            row.label(text=f"({min_cam}-{max_cam})")
-
-        # Resolution
+        # Resolution drift
         current_x = scene.render.resolution_x
         current_y = scene.render.resolution_y
         rec_x, rec_y = preset.recommended_resolution
+        if current_x != rec_x or current_y != rec_y:
+            mismatches.append(("Resolution", f"{current_x}x{current_y}", f"{rec_x}x{rec_y}"))
 
-        row = col.row()
-        row.label(text="Resolution:")
-        if current_x == rec_x and current_y == rec_y:
-            row.label(text=f"{current_x}x{current_y}", icon='CHECKMARK')
-        else:
-            row.label(text=f"{current_x}x{current_y}", icon='DOT')
-
-        # File format
+        # File format drift
         current_format = scene.render.image_settings.file_format
-        row = col.row()
-        row.label(text="Format:")
-        if current_format == preset.file_format:
-            row.label(text=current_format, icon='CHECKMARK')
-        else:
-            row.label(text=current_format, icon='DOT')
+        if current_format != preset.file_format:
+            mismatches.append(("Format", current_format, preset.file_format))
 
-        # Background
-        row = col.row()
-        row.label(text="White BG:")
-        if settings.transparent_background != preset.white_background:
-            row.label(text="Yes" if not settings.transparent_background else "No", icon='CHECKMARK')
-        else:
-            row.label(text="Yes" if not settings.transparent_background else "No", icon='DOT')
+        # Background drift (UI stores transparency; presets store white BG).
+        current_white_bg = not settings.transparent_background
+        preset_white_bg = preset.white_background
+        if current_white_bg != preset_white_bg:
+            mismatches.append(
+                (
+                    "White BG",
+                    "Yes" if current_white_bg else "No",
+                    "Yes" if preset_white_bg else "No",
+                )
+            )
+
+        # Export drift.
+        current_exports = []
+        if settings.export_colmap:
+            current_exports.append("COLMAP")
+        if settings.export_transforms_json:
+            current_exports.append("transforms.json")
+        preset_exports = []
+        if preset.export_colmap:
+            preset_exports.append("COLMAP")
+        if preset.export_transforms_json:
+            preset_exports.append("transforms.json")
+        if set(current_exports) != set(preset_exports):
+            mismatches.append(
+                (
+                    "Exports",
+                    ", ".join(current_exports) if current_exports else "None",
+                    ", ".join(preset_exports) if preset_exports else "None",
+                )
+            )
+
+        if not mismatches:
+            layout.label(text="Current capture settings match preset.", icon='CHECKMARK')
+            return
+
+        layout.label(text=f"{len(mismatches)} setting(s) differ from preset", icon='ERROR')
+        col = layout.column(align=True)
+        for label, current, recommended in mismatches:
+            row = col.row(align=True)
+            row.label(text=f"{label}:")
+            row.label(text=current, icon='DOT')
+            row.label(text=f"-> {recommended}")
+
+        layout.separator()
+        layout.operator("gs_capture.apply_preset", text="Re-apply Preset", icon='FILE_REFRESH')
 
 
 # Registration

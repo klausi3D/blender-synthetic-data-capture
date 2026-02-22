@@ -48,10 +48,11 @@ class GSCAPTURE_PT_main_panel(Panel):
         box.label(text="Quick Capture", icon='RENDER_STILL')
 
         if settings.is_rendering:
-            # Show progress
-            box.label(text=settings.current_render_info)
-            box.prop(settings, "render_progress", text="Progress")
-            box.operator("gs_capture.cancel_capture", text="Cancel", icon='CANCEL')
+            # Keep quick panel minimal while active capture details are in the
+            # dedicated progress panel to avoid duplicate controls.
+            info = settings.current_render_info or "Capture in progress"
+            box.label(text=info, icon='RENDER_ANIMATION')
+            box.label(text="Use Capture Progress panel to cancel", icon='INFO')
         else:
             row = box.row(align=True)
             row.scale_y = 1.5

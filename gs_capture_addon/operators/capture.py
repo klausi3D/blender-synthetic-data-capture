@@ -1253,6 +1253,11 @@ class GSCAPTURE_OT_capture_selected(Operator):
             self.cancel(context)
             return {'CANCELLED'}
 
+        # Do not swallow non-timer UI events while capture is running.
+        # This keeps the sidebar responsive (e.g. cancel button clicks).
+        if event.type != 'TIMER':
+            return {'PASS_THROUGH'}
+
         if event.type == 'TIMER':
             self._drain_checkpoint_writer_errors()
             if self._current_camera_index >= len(self._images_to_render):
@@ -1605,7 +1610,21 @@ class GSCAPTURE_OT_cancel_capture(Operator):
 
     def execute(self, context):
         settings = context.scene.gs_capture_settings
+        if settings.cancel_requested:
+            self.report({'INFO'}, "Cancel already requested")
+            return {'CANCELLED'}
+
         settings.cancel_requested = True
+        settings.current_render_info = "Cancelling..."
+
+        # If Blender is currently rendering, request immediate render cancel too.
+        try:
+            is_job_running = getattr(bpy.app, "is_job_running", None)
+            if callable(is_job_running) and is_job_running("RENDER"):
+                bpy.ops.render.cancel()
+        except Exception:
+            pass
+
         self.report({'INFO'}, "Cancel requested")
         return {'FINISHED'}
 
