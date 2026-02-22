@@ -22,6 +22,14 @@ def format_time(seconds):
         return f"{minutes}:{secs:02d}"
 
 
+def format_progress_bar(percent, width=22):
+    """Render a text-only progress bar to avoid interactive numeric sliders."""
+    pct = max(0.0, min(100.0, float(percent)))
+    filled = int(round((pct / 100.0) * width))
+    bar = ("#" * filled) + ("." * (width - filled))
+    return f"[{bar}] {pct:.1f}%"
+
+
 class GSCAPTURE_PT_progress_panel(Panel):
     """Progress panel showing capture status."""
     bl_label = "Capture Progress"
@@ -54,16 +62,15 @@ class GSCAPTURE_PT_progress_panel(Panel):
         row = box.row()
         row.label(text="Capturing...", icon='RENDER_ANIMATION')
 
-        # Progress bar
+        percentage = (settings.capture_current / settings.capture_total * 100) if settings.capture_total > 0 else 0.0
+
+        # Text progress bar (non-interactive)
         row = box.row()
-        row.enabled = False
-        row.prop(settings, "render_progress", text="")
+        row.label(text=format_progress_bar(percentage))
 
         # Current/Total
         row = box.row()
         row.label(text=f"{settings.capture_current} / {settings.capture_total} images")
-        percentage = (settings.capture_current / settings.capture_total * 100) if settings.capture_total > 0 else 0
-        row.label(text=f"({percentage:.1f}%)")
 
         box.separator()
 

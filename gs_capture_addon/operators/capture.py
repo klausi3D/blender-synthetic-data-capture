@@ -194,6 +194,7 @@ class GSCAPTURE_OT_capture_selected(Operator):
     _active_camera_actual_index: int
     _active_image_path: str
     _active_needs_alpha_mask: bool
+    _original_use_lock_interface: object
 
     preflight_only: BoolProperty(
         name="Validation Summary Only",
@@ -922,6 +923,7 @@ class GSCAPTURE_OT_capture_selected(Operator):
         self._original_engine = None
         self._original_eevee_samples = None
         self._original_cycles_samples = None
+        self._original_use_lock_interface = None
         self._export_errors = False
         self._checkpoint_writer = None
         self._checkpoints_enabled = False
@@ -939,6 +941,9 @@ class GSCAPTURE_OT_capture_selected(Operator):
         self._original_engine = rd.engine
         self._original_eevee_samples = context.scene.eevee.taa_render_samples if hasattr(context.scene.eevee, 'taa_render_samples') else 64
         self._original_cycles_samples = context.scene.cycles.samples if hasattr(context.scene, 'cycles') else 128
+        if hasattr(rd, "use_lock_interface"):
+            self._original_use_lock_interface = rd.use_lock_interface
+            rd.use_lock_interface = False
 
         if settings.render_speed_preset == 'FAST':
             engine_name, warning = get_eevee_engine_name()
@@ -965,6 +970,8 @@ class GSCAPTURE_OT_capture_selected(Operator):
                 context.scene.eevee.taa_render_samples = self._original_eevee_samples
             if self._original_cycles_samples and hasattr(context.scene, 'cycles'):
                 context.scene.cycles.samples = self._original_cycles_samples
+            if self._original_use_lock_interface is not None and hasattr(rd, "use_lock_interface"):
+                rd.use_lock_interface = self._original_use_lock_interface
 
         validation_result = self._get_validation_result(
             context,
@@ -1244,9 +1251,6 @@ class GSCAPTURE_OT_capture_selected(Operator):
         self._timer = wm.event_timer_add(0.1, window=context.window)
         wm.modal_handler_add(self)
 
-        # Start built-in progress bar
-        wm.progress_begin(0, total_to_render)
-
         return {'RUNNING_MODAL'}
 
     def _is_render_job_running(self):
@@ -1476,9 +1480,6 @@ class GSCAPTURE_OT_capture_selected(Operator):
 
             settings.capture_current_camera = cam.name if cam else ""
 
-            # Update built-in progress bar.
-            context.window_manager.progress_update(self._current_camera_index)
-
             # Force UI redraw.
             for area in context.screen.areas:
                 if area.type == 'VIEW_3D':
@@ -1585,9 +1586,6 @@ class GSCAPTURE_OT_capture_selected(Operator):
         settings.last_capture_path = self._output_path
         settings.last_capture_success = not self._export_errors
 
-        # End built-in progress bar
-        context.window_manager.progress_end()
-
         # Cleanup
         self.cleanup(context)
 
@@ -1644,6 +1642,8 @@ class GSCAPTURE_OT_capture_selected(Operator):
             context.scene.eevee.taa_render_samples = self._original_eevee_samples
         if self._original_cycles_samples and hasattr(context.scene, 'cycles'):
             context.scene.cycles.samples = self._original_cycles_samples
+        if self._original_use_lock_interface is not None and hasattr(context.scene.render, "use_lock_interface"):
+            context.scene.render.use_lock_interface = self._original_use_lock_interface
 
         # Shared restore path for both finish() and cancel().
         self._restore_target_object_pass_indices(context)
@@ -1677,9 +1677,6 @@ class GSCAPTURE_OT_capture_selected(Operator):
         settings.last_capture_duration = elapsed
         settings.last_capture_path = self._output_path
         settings.last_capture_success = False
-
-        # End built-in progress bar
-        context.window_manager.progress_end()
 
         self.cleanup(context)
         self._render_in_progress = False
