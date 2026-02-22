@@ -91,6 +91,7 @@ def main() -> int:
     if object_index_report.get("success") is not True:
         failures.append("object-index-only smoke test failed")
     object_index_checks = object_index_report.get("checks", {})
+    object_index_details = object_index_report.get("details", {})
     required_object_index_checks = [
         "images_present",
         "masks_present",
@@ -102,6 +103,13 @@ def main() -> int:
     for key in required_object_index_checks:
         if object_index_checks.get(key) is not True:
             failures.append(f"object-index check failed: {key}")
+    mask_content_check = object_index_details.get("mask_content_check", {})
+    if not isinstance(mask_content_check, dict):
+        failures.append("object-index details missing mask_content_check metadata")
+    else:
+        status = mask_content_check.get("status")
+        if status not in {"required_png", "skipped_exr"}:
+            failures.append("object-index mask_content_check status must be required_png or skipped_exr")
 
     if coverage_edge_report.get("errors"):
         failures.append("coverage-edge report contains errors")

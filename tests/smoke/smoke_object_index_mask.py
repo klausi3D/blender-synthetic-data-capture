@@ -263,7 +263,15 @@ def tick():
 
             image_sanity = assess_artifact_sanity(images)
             mask_sanity = assess_artifact_sanity(masks)
-            mask_signal_ok, mask_signal_detail = sampled_mask_has_signal(masks)
+            png_masks = [path for path in masks if path.suffix.lower() == ".png"]
+            if png_masks:
+                mask_signal_ok, mask_signal_detail = sampled_mask_has_signal(png_masks)
+                mask_signal_status = "required_png"
+            else:
+                # EXR object-index payloads can be valid while appearing flat via Blender's pixel API.
+                mask_signal_ok = True
+                mask_signal_detail = "skipped_for_exr_masks"
+                mask_signal_status = "skipped_exr"
 
             checks = {
                 "images_present": len(images) > 0,
@@ -285,7 +293,10 @@ def tick():
                 "masks_sanity": mask_sanity,
                 "missing_mask_ids": missing_mask_ids,
                 "orphan_mask_ids": orphan_mask_ids,
-                "mask_content_detail": mask_signal_detail,
+                "mask_content_check": {
+                    "status": mask_signal_status,
+                    "detail": mask_signal_detail,
+                },
             }
             STATE["report"]["success"] = all(checks.values())
             write_and_quit()
