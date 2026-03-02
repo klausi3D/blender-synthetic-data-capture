@@ -32,6 +32,7 @@ bl_info = {
 }
 
 import bpy
+from bpy.app.handlers import persistent
 from bpy.props import PointerProperty
 
 # Import all modules
@@ -132,6 +133,24 @@ classes = [
 ]
 
 
+@persistent
+def _reset_runtime_state(dummy):
+    """Reset runtime capture state when loading files.
+
+    This prevents stuck 'is_rendering' state from old .blend files
+    or files saved during a crash.
+    """
+    for scene in bpy.data.scenes:
+        if hasattr(scene, 'gs_capture_settings'):
+            settings = scene.gs_capture_settings
+            settings.is_rendering = False
+            settings.cancel_requested = False
+            settings.render_progress = 0.0
+            settings.current_render_info = ""
+            settings.capture_current = 0
+            settings.capture_total = 0
+
+
 def register():
     """Register all addon classes and properties."""
     # Register preferences first
@@ -148,9 +167,17 @@ def register():
         description="Settings for Gaussian Splatting training data capture"
     )
 
+    # Register load handler to reset runtime state
+    if _reset_runtime_state not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(_reset_runtime_state)
+
 
 def unregister():
     """Unregister all addon classes and properties."""
+    # Remove load handler
+    if _reset_runtime_state in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_reset_runtime_state)
+
     # Ensure viewport draw handlers are removed on addon unload.
     try:
         from .utils.viewport import cleanup_visualizers
