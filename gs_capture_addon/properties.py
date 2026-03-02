@@ -433,23 +433,23 @@ class GSCaptureSettings(PropertyGroup):
     )
 
     # ==========================================================================
-    # PROGRESS/STATE (Runtime)
+    # PROGRESS/STATE (Runtime - not saved to .blend file)
     # ==========================================================================
 
-    is_rendering: BoolProperty(default=False)
-    render_progress: FloatProperty(default=0.0, min=0.0, max=100.0, subtype='PERCENTAGE')
-    current_render_info: StringProperty(default="")
-    cancel_requested: BoolProperty(default=False, description="Request to cancel current capture")
+    is_rendering: BoolProperty(default=False, options={'SKIP_SAVE'})
+    render_progress: FloatProperty(default=0.0, min=0.0, max=100.0, subtype='PERCENTAGE', options={'SKIP_SAVE'})
+    current_render_info: StringProperty(default="", options={'SKIP_SAVE'})
+    cancel_requested: BoolProperty(default=False, description="Request to cancel current capture", options={'SKIP_SAVE'})
 
-    # Extended progress tracking
-    capture_current: IntProperty(default=0, description="Current image being rendered")
-    capture_total: IntProperty(default=0, description="Total images to render")
-    capture_start_time: FloatProperty(default=0.0, description="Capture start timestamp")
-    capture_elapsed_seconds: FloatProperty(default=0.0, description="Elapsed time in seconds")
-    capture_eta_seconds: FloatProperty(default=0.0, description="Estimated time remaining")
-    capture_rate: FloatProperty(default=0.0, description="Images per second")
-    capture_current_camera: StringProperty(default="", description="Name of current camera")
-    capture_current_object: StringProperty(default="", description="Current object/batch being captured")
+    # Extended progress tracking (runtime only)
+    capture_current: IntProperty(default=0, description="Current image being rendered", options={'SKIP_SAVE'})
+    capture_total: IntProperty(default=0, description="Total images to render", options={'SKIP_SAVE'})
+    capture_start_time: FloatProperty(default=0.0, description="Capture start timestamp", options={'SKIP_SAVE'})
+    capture_elapsed_seconds: FloatProperty(default=0.0, description="Elapsed time in seconds", options={'SKIP_SAVE'})
+    capture_eta_seconds: FloatProperty(default=0.0, description="Estimated time remaining", options={'SKIP_SAVE'})
+    capture_rate: FloatProperty(default=0.0, description="Images per second", options={'SKIP_SAVE'})
+    capture_current_camera: StringProperty(default="", description="Name of current camera", options={'SKIP_SAVE'})
+    capture_current_object: StringProperty(default="", description="Current object/batch being captured", options={'SKIP_SAVE'})
 
     # Last capture stats (persisted after completion)
     last_capture_images: IntProperty(default=0, description="Images from last capture")
