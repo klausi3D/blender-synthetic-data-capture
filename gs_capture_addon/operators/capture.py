@@ -192,6 +192,7 @@ class GSCAPTURE_OT_capture_selected(Operator):
     _original_object_pass_indices: dict
     _render_in_progress: bool
     _render_done: bool
+    _render_idle_ticks: int
     _active_camera_actual_index: int
     _active_image_path: str
     _active_needs_alpha_mask: bool
@@ -936,6 +937,7 @@ class GSCAPTURE_OT_capture_selected(Operator):
         self._original_view_layer_pass_flags = {}
         self._original_object_pass_indices = {}
         self._render_done = False
+        self._render_idle_ticks = 0
         self._render_complete_handler = None
         self._render_cancel_handler = None
         self._render_handlers_registered = False
@@ -1282,6 +1284,7 @@ class GSCAPTURE_OT_capture_selected(Operator):
     def _mark_render_done(self):
         if self._render_in_progress:
             self._render_done = True
+            self._render_idle_ticks = 0
 
     def _register_render_handlers(self):
         if self._render_handlers_registered:
@@ -1340,6 +1343,7 @@ class GSCAPTURE_OT_capture_selected(Operator):
         try:
             context.scene.render.filepath = image_path
             self._render_done = False
+            self._render_idle_ticks = 0
             if self._save_manually:
                 # Manual-save mode is a compatibility fallback for scenes that
                 # cannot use write_still reliably.
@@ -1456,9 +1460,10 @@ class GSCAPTURE_OT_capture_selected(Operator):
             # If a render job is active, cancel it first and wait for Blender
             # to finish unwinding before cleaning up operator state.
             if self._render_in_progress:
-                settings.current_render_info = "Cancelling current render..."
-                self._request_render_cancel()
-                return {'RUNNING_MODAL'}
+                if self._is_render_job_running() or not self._render_done:
+                    settings.current_render_info = "Cancelling current render..."
+                    self._request_render_cancel()
+                    return {'RUNNING_MODAL'}
             settings.cancel_requested = False
             self.cancel(context)
             return {'CANCELLED'}
@@ -1466,9 +1471,10 @@ class GSCAPTURE_OT_capture_selected(Operator):
         if event.type == 'ESC':
             settings.cancel_requested = True
             if self._render_in_progress:
-                settings.current_render_info = "Cancelling current render..."
-                self._request_render_cancel()
-                return {'RUNNING_MODAL'}
+                if self._is_render_job_running() or not self._render_done:
+                    settings.current_render_info = "Cancelling current render..."
+                    self._request_render_cancel()
+                    return {'RUNNING_MODAL'}
             settings.cancel_requested = False
             self.cancel(context)
             return {'CANCELLED'}
@@ -1487,9 +1493,18 @@ class GSCAPTURE_OT_capture_selected(Operator):
         # If a render is active, wait for it to finish (or be canceled).
         if self._render_in_progress:
             if not self._render_done:
-                return {'RUNNING_MODAL'}
+                if self._is_render_job_running():
+                    self._render_idle_ticks = 0
+                    return {'RUNNING_MODAL'}
+                # Fallback for environments where render handlers are not
+                # triggered reliably: require several consecutive idle ticks.
+                self._render_idle_ticks += 1
+                if self._render_idle_ticks < 5:
+                    return {'RUNNING_MODAL'}
+                self._render_done = True
 
             if self._is_render_job_running():
+                self._render_idle_ticks = 0
                 return {'RUNNING_MODAL'}
 
             # Render completed. If user requested cancel while render was active,
@@ -1645,6 +1660,8 @@ class GSCAPTURE_OT_capture_selected(Operator):
         self.cleanup(context)
 
         self._render_in_progress = False
+        self._render_done = False
+        self._render_idle_ticks = 0
         settings.is_rendering = False
         settings.cancel_requested = False
         settings.render_progress = 100.0
@@ -1739,6 +1756,7 @@ class GSCAPTURE_OT_capture_selected(Operator):
         self.cleanup(context)
         self._render_in_progress = False
         self._render_done = False
+        self._render_idle_ticks = 0
         settings.is_rendering = False
         settings.cancel_requested = False
         settings.current_render_info = "Cancelled"
