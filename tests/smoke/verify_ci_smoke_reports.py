@@ -73,6 +73,7 @@ def main() -> int:
         "mask_export_alpha_object_index",
         "depth_export",
         "normal_export",
+        "camera_axis_z_up",
         "colmap_loads_in_3dgs_inferred",
         "transforms_json_works_inferred",
     ]

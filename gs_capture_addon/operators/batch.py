@@ -30,10 +30,16 @@ class GSCAPTURE_OT_batch_capture(Operator):
 
     def execute(self, context):
         settings = context.scene.gs_capture_settings
+        if settings.batch_running:
+            self.report({'WARNING'}, "Batch capture is already running")
+            return {'CANCELLED'}
 
         self._items_to_capture = self._build_items_to_capture(context, settings)
         if not self._items_to_capture:
             self.report({'ERROR'}, "No items to capture")
+            return {'CANCELLED'}
+        if self._is_render_job_running():
+            self.report({'WARNING'}, "Cannot start batch while another render job is active")
             return {'CANCELLED'}
 
         self._original_output = settings.output_path
@@ -44,8 +50,13 @@ class GSCAPTURE_OT_batch_capture(Operator):
         self._completed = 0
         self._failed = 0
         self._cancel_batch = False
+        settings.batch_running = True
+        settings.batch_cancel_requested = False
+        settings.cancel_requested = False
 
         if not self._start_next_capture(context):
+            settings.batch_running = False
+            settings.batch_cancel_requested = False
             self._restore_state(context)
             return {'CANCELLED'}
 
@@ -57,8 +68,12 @@ class GSCAPTURE_OT_batch_capture(Operator):
     def modal(self, context, event):
         settings = context.scene.gs_capture_settings
         try:
+            if settings.batch_cancel_requested:
+                self._cancel_batch = True
+
             if event.type == 'ESC':
                 self._cancel_batch = True
+                settings.batch_cancel_requested = True
                 if settings.is_rendering:
                     settings.cancel_requested = True
                 return {'RUNNING_MODAL'}
@@ -66,17 +81,26 @@ class GSCAPTURE_OT_batch_capture(Operator):
             if event.type == 'TIMER':
                 if self._cancel_batch:
                     if settings.is_rendering:
+                        settings.cancel_requested = True
+                        return {'RUNNING_MODAL'}
+                    if self._is_render_job_running():
                         return {'RUNNING_MODAL'}
                     self._finish(context, cancelled=True)
                     return {'CANCELLED'}
 
-                if self._waiting_for_capture and not settings.is_rendering:
+                if self._waiting_for_capture:
+                    if settings.is_rendering or self._is_render_job_running():
+                        return {'RUNNING_MODAL'}
+
                     if settings.last_capture_success:
                         self._completed += 1
                     else:
                         self._failed += 1
 
                     self._waiting_for_capture = False
+                    if self._cancel_batch:
+                        self._finish(context, cancelled=True)
+                        return {'CANCELLED'}
 
                     if not self._start_next_capture(context):
                         self._finish(context)
@@ -88,6 +112,15 @@ class GSCAPTURE_OT_batch_capture(Operator):
             self._finish(context, cancelled=True)
             self.report({'ERROR'}, f"Batch capture stopped due to unexpected error: {exc}")
             return {'CANCELLED'}
+
+    def _is_render_job_running(self):
+        is_job_running = getattr(bpy.app, "is_job_running", None)
+        if callable(is_job_running):
+            try:
+                return bool(is_job_running("RENDER"))
+            except Exception:
+                return False
+        return False
 
     def _build_items_to_capture(self, context, settings):
         items_to_capture = []
@@ -132,6 +165,8 @@ class GSCAPTURE_OT_batch_capture(Operator):
 
     def _start_next_capture(self, context):
         settings = context.scene.gs_capture_settings
+        if self._cancel_batch:
+            return False
         self._current_index += 1
 
         if self._current_index >= len(self._items_to_capture):
@@ -162,6 +197,9 @@ class GSCAPTURE_OT_batch_capture(Operator):
         return True
 
     def _finish(self, context, cancelled=False):
+        settings = context.scene.gs_capture_settings
+        settings.batch_running = False
+        settings.batch_cancel_requested = False
         self._restore_state(context)
         if cancelled:
             self.report({'WARNING'}, "Batch capture cancelled")

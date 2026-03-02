@@ -476,6 +476,7 @@ def collect_case2_results() -> None:
 
 def evaluate_checks() -> None:
     from gs_capture_addon.utils.paths import validate_path_length
+    from gs_capture_addon.core.camera import generate_camera_positions
 
     c1_partial = STATE["report"]["cases"].get("case1_after_cancel", {})
     c1_final = STATE["report"]["cases"].get("case1_final", {})
@@ -524,6 +525,15 @@ def evaluate_checks() -> None:
 
     c1_artifacts = c1_final.get("artifact_sanity", {})
     c2_artifacts = c2_final.get("artifact_sanity", {})
+    eps = 1e-6
+    top_points = generate_camera_positions("HEMISPHERE_TOP", 24)
+    bottom_points = generate_camera_positions("HEMISPHERE_BOTTOM", 24)
+    axis_validation = {
+        "top_count": len(top_points),
+        "bottom_count": len(bottom_points),
+        "top_all_positive_z": bool(top_points) and all(point.z > eps for point in top_points),
+        "bottom_all_negative_z": bool(bottom_points) and all(point.z < -eps for point in bottom_points),
+    }
 
     STATE["report"]["checks"] = {
         "clean_capture_test": (
@@ -550,10 +560,14 @@ def evaluate_checks() -> None:
         ),
         "checkpoint_resume": checkpoint_resume_ok,
         "windows_path_warnings": windows_warning_ok,
+        "camera_axis_z_up": (
+            axis_validation["top_all_positive_z"] and axis_validation["bottom_all_negative_z"]
+        ),
         # Inference based on exported file structure and parseability.
         "colmap_loads_in_3dgs_inferred": colmap_ok,
         "transforms_json_works_inferred": transforms_ok,
     }
+    STATE["report"]["cases"]["distribution_axis_validation"] = axis_validation
     STATE["report"]["platform_requirements"] = {
         "windows_path_warnings": windows_path_requirement,
     }

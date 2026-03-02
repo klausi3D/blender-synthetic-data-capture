@@ -440,6 +440,8 @@ class GSCaptureSettings(PropertyGroup):
     render_progress: FloatProperty(default=0.0, min=0.0, max=100.0, subtype='PERCENTAGE', options={'SKIP_SAVE'})
     current_render_info: StringProperty(default="", options={'SKIP_SAVE'})
     cancel_requested: BoolProperty(default=False, description="Request to cancel current capture", options={'SKIP_SAVE'})
+    batch_running: BoolProperty(default=False, description="Batch capture session is currently active", options={'SKIP_SAVE'})
+    batch_cancel_requested: BoolProperty(default=False, description="Request to cancel active batch capture", options={'SKIP_SAVE'})
 
     # Extended progress tracking (runtime only)
     capture_current: IntProperty(default=0, description="Current image being rendered", options={'SKIP_SAVE'})

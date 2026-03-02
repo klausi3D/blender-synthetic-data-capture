@@ -25,13 +25,13 @@ def fibonacci_sphere_points(n):
     phi = math.pi * (3.0 - math.sqrt(5.0))  # Golden angle in radians
 
     for i in range(n):
-        y = 1 - (i / float(n - 1)) * 2 if n > 1 else 0  # y goes from 1 to -1
-        radius = math.sqrt(1 - y * y)
+        z = 1 - (i / float(n - 1)) * 2 if n > 1 else 0  # z goes from 1 to -1
+        radius = math.sqrt(1 - z * z)
 
         theta = phi * i
 
         x = math.cos(theta) * radius
-        z = math.sin(theta) * radius
+        y = math.sin(theta) * radius
 
         points.append(Vector((x, y, z)))
 
@@ -50,13 +50,13 @@ def generate_ring_points(count, elevation_deg=0):
     """
     points = []
     elevation_rad = math.radians(elevation_deg)
-    y = math.sin(elevation_rad)
+    z = math.sin(elevation_rad)
     horizontal_radius = math.cos(elevation_rad)
 
     for i in range(count):
         angle = (2 * math.pi * i) / count
         x = math.cos(angle) * horizontal_radius
-        z = math.sin(angle) * horizontal_radius
+        y = math.sin(angle) * horizontal_radius
         points.append(Vector((x, y, z)))
 
     return points
@@ -111,7 +111,7 @@ def generate_hemisphere_points(count, top=True):
 
     Args:
         count: Approximate number of points (may generate more then filter)
-        top: If True, top hemisphere (y > 0), else bottom
+        top: If True, top hemisphere (z > 0), else bottom
 
     Returns:
         list: List of Vector points on unit hemisphere
@@ -120,9 +120,9 @@ def generate_hemisphere_points(count, top=True):
     all_points = fibonacci_sphere_points(count * 2)
 
     if top:
-        filtered = [p for p in all_points if p.y > 0]
+        filtered = [p for p in all_points if p.z > 0]
     else:
-        filtered = [p for p in all_points if p.y < 0]
+        filtered = [p for p in all_points if p.z < 0]
 
     return filtered[:count]
 
@@ -147,9 +147,9 @@ def generate_camera_positions(distribution, count, min_elevation=-90, max_elevat
     if distribution == 'FIBONACCI':
         points = fibonacci_sphere_points(count)
         # Filter by elevation
-        min_y = math.sin(math.radians(min_elevation))
-        max_y = math.sin(math.radians(max_elevation))
-        points = [p for p in points if min_y <= p.y <= max_y]
+        min_z = math.sin(math.radians(min_elevation))
+        max_z = math.sin(math.radians(max_elevation))
+        points = [p for p in points if min_z <= p.z <= max_z]
 
     elif distribution == 'HEMISPHERE_TOP':
         points = generate_hemisphere_points(count, top=True)

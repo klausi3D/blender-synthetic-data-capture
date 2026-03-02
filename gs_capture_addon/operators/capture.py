@@ -191,10 +191,14 @@ class GSCAPTURE_OT_capture_selected(Operator):
     _original_view_layer_pass_flags: dict
     _original_object_pass_indices: dict
     _render_in_progress: bool
+    _render_done: bool
     _active_camera_actual_index: int
     _active_image_path: str
     _active_needs_alpha_mask: bool
     _original_use_lock_interface: object
+    _render_complete_handler: object
+    _render_cancel_handler: object
+    _render_handlers_registered: bool
 
     preflight_only: BoolProperty(
         name="Validation Summary Only",
@@ -931,6 +935,10 @@ class GSCAPTURE_OT_capture_selected(Operator):
         self._capture_view_layer_name = ""
         self._original_view_layer_pass_flags = {}
         self._original_object_pass_indices = {}
+        self._render_done = False
+        self._render_complete_handler = None
+        self._render_cancel_handler = None
+        self._render_handlers_registered = False
 
         settings = context.scene.gs_capture_settings
         rd = context.scene.render
@@ -1250,6 +1258,7 @@ class GSCAPTURE_OT_capture_selected(Operator):
         wm = context.window_manager
         self._timer = wm.event_timer_add(0.1, window=context.window)
         wm.modal_handler_add(self)
+        self._register_render_handlers()
 
         return {'RUNNING_MODAL'}
 
@@ -1270,6 +1279,48 @@ class GSCAPTURE_OT_capture_selected(Operator):
         except Exception:
             pass
 
+    def _mark_render_done(self):
+        if self._render_in_progress:
+            self._render_done = True
+
+    def _register_render_handlers(self):
+        if self._render_handlers_registered:
+            return
+
+        if self._render_complete_handler is None:
+            def _on_render_complete(*_args):
+                self._mark_render_done()
+            self._render_complete_handler = _on_render_complete
+
+        if self._render_cancel_handler is None:
+            def _on_render_cancel(*_args):
+                self._mark_render_done()
+            self._render_cancel_handler = _on_render_cancel
+
+        handlers = bpy.app.handlers
+        if self._render_complete_handler not in handlers.render_complete:
+            handlers.render_complete.append(self._render_complete_handler)
+        if self._render_cancel_handler not in handlers.render_cancel:
+            handlers.render_cancel.append(self._render_cancel_handler)
+        self._render_handlers_registered = True
+
+    def _unregister_render_handlers(self):
+        if not self._render_handlers_registered:
+            return
+
+        handlers = bpy.app.handlers
+        for handler_list, callback in (
+            (handlers.render_complete, self._render_complete_handler),
+            (handlers.render_cancel, self._render_cancel_handler),
+        ):
+            if callback and callback in handler_list:
+                try:
+                    handler_list.remove(callback)
+                except ValueError:
+                    pass
+
+        self._render_handlers_registered = False
+
     def _start_async_render(self, context, settings):
         """Start rendering the current camera asynchronously."""
         actual_index = self._images_to_render[self._current_camera_index]
@@ -1288,6 +1339,7 @@ class GSCAPTURE_OT_capture_selected(Operator):
 
         try:
             context.scene.render.filepath = image_path
+            self._render_done = False
             if self._save_manually:
                 # Manual-save mode is a compatibility fallback for scenes that
                 # cannot use write_still reliably.
@@ -1403,7 +1455,7 @@ class GSCAPTURE_OT_capture_selected(Operator):
         if settings.cancel_requested:
             # If a render job is active, cancel it first and wait for Blender
             # to finish unwinding before cleaning up operator state.
-            if self._render_in_progress and self._is_render_job_running():
+            if self._render_in_progress:
                 settings.current_render_info = "Cancelling current render..."
                 self._request_render_cancel()
                 return {'RUNNING_MODAL'}
@@ -1413,7 +1465,7 @@ class GSCAPTURE_OT_capture_selected(Operator):
 
         if event.type == 'ESC':
             settings.cancel_requested = True
-            if self._render_in_progress and self._is_render_job_running():
+            if self._render_in_progress:
                 settings.current_render_info = "Cancelling current render..."
                 self._request_render_cancel()
                 return {'RUNNING_MODAL'}
@@ -1434,6 +1486,9 @@ class GSCAPTURE_OT_capture_selected(Operator):
 
         # If a render is active, wait for it to finish (or be canceled).
         if self._render_in_progress:
+            if not self._render_done:
+                return {'RUNNING_MODAL'}
+
             if self._is_render_job_running():
                 return {'RUNNING_MODAL'}
 
@@ -1611,6 +1666,9 @@ class GSCAPTURE_OT_capture_selected(Operator):
             context.window_manager.event_timer_remove(self._timer)
             self._timer = None
 
+        # Remove render handlers used to synchronize async render teardown.
+        self._unregister_render_handlers()
+
         # Restore camera
         if self._original_camera:
             context.scene.camera = self._original_camera
@@ -1680,6 +1738,7 @@ class GSCAPTURE_OT_capture_selected(Operator):
 
         self.cleanup(context)
         self._render_in_progress = False
+        self._render_done = False
         settings.is_rendering = False
         settings.cancel_requested = False
         settings.current_render_info = "Cancelled"
@@ -1704,10 +1763,14 @@ class GSCAPTURE_OT_cancel_capture(Operator):
     def execute(self, context):
         settings = context.scene.gs_capture_settings
         if settings.cancel_requested:
+            if settings.batch_running:
+                settings.batch_cancel_requested = True
             self.report({'INFO'}, "Cancel already requested")
             return {'CANCELLED'}
 
         settings.cancel_requested = True
+        if settings.batch_running:
+            settings.batch_cancel_requested = True
         settings.current_render_info = "Cancelling..."
 
         # If Blender is currently rendering, request immediate render cancel too.
