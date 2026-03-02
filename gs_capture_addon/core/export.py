@@ -1280,12 +1280,17 @@ def save_object_mask(context, output_path, target_objects):
 
 
 def cleanup_compositor_nodes(context):
-    """Remove GS Capture compositor nodes.
+    """Remove GS Capture compositor nodes and disable compositor if empty.
+
+    In Blender 5.0+, having use_nodes enabled with no output nodes causes an error.
+    This function removes GS_ prefixed nodes and disables the compositor if no
+    output nodes remain.
 
     Args:
         context: Blender context
     """
-    tree = get_compositor_tree(context.scene, create=False)
+    scene = context.scene
+    tree = get_compositor_tree(scene, create=False)
     if tree is None:
         return
 
@@ -1293,6 +1298,26 @@ def cleanup_compositor_nodes(context):
 
     for node in nodes_to_remove:
         tree.nodes.remove(node)
+
+    # Check if any output nodes remain after cleanup
+    output_types = {'COMPOSITE', 'OUTPUT_FILE', 'VIEWER'}
+    has_output = any(node.type in output_types for node in tree.nodes)
+
+    if not has_output:
+        # Disable compositor to prevent Blender 5.0 error:
+        # "No Group Output or File Output nodes in scene"
+        if hasattr(scene, 'use_nodes'):
+            try:
+                scene.use_nodes = False
+            except Exception:
+                pass
+        # For Blender 5.x with compositing_node_group
+        if hasattr(scene, 'compositing_node_group') and scene.compositing_node_group is not None:
+            try:
+                # Clear the node group reference
+                scene.compositing_node_group = None
+            except Exception:
+                pass
 
 
 def _write_grayscale_png(filepath, data):
