@@ -63,6 +63,7 @@ def main() -> int:
     coverage_edge_report = load_report(REPORT_ROOT / "coverage_edge_cases_report.json")
     colmap_binary_report = load_report(REPORT_ROOT / "colmap_binary_report.json")
     import_splat_report = load_report(REPORT_ROOT / "import_trained_splat_report.json")
+    object_transform_report = load_report(REPORT_ROOT / "object_transform_export_report.json")
 
     if release_report.get("errors"):
         failures.append("release smoke report contains errors")
@@ -161,6 +162,25 @@ def main() -> int:
         if import_checks.get(key) is not True:
             failures.append(f"import-splat check failed: {key}")
 
+    if object_transform_report.get("errors"):
+        failures.append("object-transform report contains errors")
+    if object_transform_report.get("success") is not True:
+        failures.append("object-transform smoke test failed")
+
+    object_transform_checks = object_transform_report.get("checks", {})
+    required_object_transform_checks = [
+        "sidecar_exists",
+        "schema_basics_valid",
+        "target_profile_valid",
+        "conversion_metadata_valid",
+        "objects_present",
+        "selected_objects_exported",
+        "object_schema_valid",
+    ]
+    for key in required_object_transform_checks:
+        if object_transform_checks.get(key) is not True:
+            failures.append(f"object-transform check failed: {key}")
+
     if failures:
         print("Smoke verification failed:")
         for failure in failures:
@@ -174,6 +194,7 @@ def main() -> int:
     print(f"- coverage-edge checks: {coverage_checks}")
     print(f"- colmap-binary checks: {binary_checks}")
     print(f"- import-splat checks: {import_checks}")
+    print(f"- object-transform checks: {object_transform_checks}")
     return 0
 
 

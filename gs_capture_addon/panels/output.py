@@ -31,6 +31,12 @@ class GSCAPTURE_PT_output_panel(Panel):
         col = layout.column(align=True)
         col.prop(settings, "export_colmap", text="COLMAP (sparse/0/)")
         col.prop(settings, "export_transforms_json", text="transforms.json")
+        col.prop(settings, "export_object_transforms", text="object_transforms.json")
+
+        if settings.export_object_transforms:
+            box = layout.box()
+            box.label(text="Object Transform Settings:", icon='ORIENTATION_GLOBAL')
+            box.prop(settings, "object_transform_target_preset", text="Target Preset")
 
         if settings.export_colmap:
             box = layout.box()

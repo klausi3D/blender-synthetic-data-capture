@@ -10,11 +10,98 @@ import json
 import random
 import struct
 import zlib
+from datetime import datetime, timezone
 from bisect import bisect_left
 import numpy as np
 from mathutils import Vector, Matrix
 
 from ..utils.paths import validate_path_length
+
+
+_OBJECT_TRANSFORM_TARGET_PROFILE_DATA = {
+    "BLENDER_NATIVE": {
+        "name": "Blender Native",
+        "description": "Blender world coordinates without conversion.",
+        "axis_up": "Z",
+        "axis_forward": "Y",
+        "handedness": "RIGHT",
+        "conversion_matrix": (
+            (1.0, 0.0, 0.0, 0.0),
+            (0.0, 1.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0, 0.0),
+            (0.0, 0.0, 0.0, 1.0),
+        ),
+    },
+    "NERF": {
+        "name": "NeRF / OpenGL",
+        "description": "NeRF-style coordinates (OpenGL-compatible) used by transforms.json.",
+        "axis_up": "Y",
+        "axis_forward": "-Z",
+        "handedness": "RIGHT",
+        "conversion_matrix": (
+            (1.0, 0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0, 0.0),
+            (0.0, -1.0, 0.0, 0.0),
+            (0.0, 0.0, 0.0, 1.0),
+        ),
+    },
+    "COLMAP": {
+        "name": "COLMAP / OpenCV",
+        "description": "COLMAP-aligned world orientation using OpenCV-style axes.",
+        "axis_up": "-Y",
+        "axis_forward": "Z",
+        "handedness": "RIGHT",
+        "conversion_matrix": (
+            (1.0, 0.0, 0.0, 0.0),
+            (0.0, -1.0, 0.0, 0.0),
+            (0.0, 0.0, -1.0, 0.0),
+            (0.0, 0.0, 0.0, 1.0),
+        ),
+    },
+    "UNITY": {
+        "name": "Unity",
+        "description": "Unity coordinates (Y-up, Z-forward, left-handed).",
+        "axis_up": "Y",
+        "axis_forward": "Z",
+        "handedness": "LEFT",
+        "conversion_matrix": (
+            (1.0, 0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0, 0.0),
+            (0.0, 1.0, 0.0, 0.0),
+            (0.0, 0.0, 0.0, 1.0),
+        ),
+    },
+    "UNREAL": {
+        "name": "Unreal Engine",
+        "description": "Unreal coordinates (Z-up, X-forward, left-handed).",
+        "axis_up": "Z",
+        "axis_forward": "X",
+        "handedness": "LEFT",
+        "conversion_matrix": (
+            (0.0, 1.0, 0.0, 0.0),
+            (1.0, 0.0, 0.0, 0.0),
+            (0.0, 0.0, 1.0, 0.0),
+            (0.0, 0.0, 0.0, 1.0),
+        ),
+    },
+}
+
+_OBJECT_TRANSFORM_TARGET_PROFILE_ORDER = (
+    "BLENDER_NATIVE",
+    "NERF",
+    "COLMAP",
+    "UNITY",
+    "UNREAL",
+)
+
+OBJECT_TRANSFORM_TARGET_PRESET_ITEMS = [
+    (
+        profile_id,
+        _OBJECT_TRANSFORM_TARGET_PROFILE_DATA[profile_id]["name"],
+        _OBJECT_TRANSFORM_TARGET_PROFILE_DATA[profile_id]["description"],
+    )
+    for profile_id in _OBJECT_TRANSFORM_TARGET_PROFILE_ORDER
+]
 
 
 def _ensure_file_written(filepath, description="file"):
@@ -236,6 +323,62 @@ def get_camera_intrinsics(camera, image_width, image_height):
         'focal_mm': focal_mm,
         'sensor_width': sensor_width,
     }
+
+
+def get_object_transform_target_profile(profile_id):
+    """Get transform conversion profile metadata and matrix for a preset."""
+    resolved_id = profile_id if profile_id in _OBJECT_TRANSFORM_TARGET_PROFILE_DATA else "BLENDER_NATIVE"
+    source_data = _OBJECT_TRANSFORM_TARGET_PROFILE_DATA[resolved_id]
+    profile = {
+        "id": resolved_id,
+        "name": source_data["name"],
+        "description": source_data["description"],
+        "axis_up": source_data["axis_up"],
+        "axis_forward": source_data["axis_forward"],
+        "handedness": source_data["handedness"],
+        "conversion_matrix": Matrix(source_data["conversion_matrix"]),
+    }
+    if profile_id and profile_id != resolved_id:
+        profile["requested_id"] = profile_id
+    return profile
+
+
+def _matrix_to_rows(matrix):
+    return [[float(matrix[row][col]) for col in range(4)] for row in range(4)]
+
+
+def _vector_to_xyz(value):
+    return [float(value.x), float(value.y), float(value.z)]
+
+
+def _matrix_to_trs_payload(matrix):
+    """Serialize a matrix to translation, rotation, and scale components."""
+    location, rotation_quaternion, scale = matrix.decompose()
+    rotation_euler = rotation_quaternion.to_euler('XYZ')
+    return {
+        "location": _vector_to_xyz(location),
+        "rotation_quaternion_wxyz": [
+            float(rotation_quaternion.w),
+            float(rotation_quaternion.x),
+            float(rotation_quaternion.y),
+            float(rotation_quaternion.z),
+        ],
+        "rotation_euler_xyz_radians": _vector_to_xyz(rotation_euler),
+        "scale": _vector_to_xyz(scale),
+    }
+
+
+def _resolve_export_objects(objects):
+    """Return deterministic, de-duplicated object list for transform export."""
+    if not objects:
+        return []
+
+    unique = {}
+    for obj in objects:
+        if obj is None:
+            continue
+        unique[obj.name] = obj
+    return [unique[name] for name in sorted(unique)]
 
 
 def blender_to_colmap_matrix(blender_matrix):
@@ -1019,6 +1162,71 @@ def export_transforms_json(cameras, output_path, image_width, image_height,
         _ensure_file_written(json_path, "transforms.json")
     except Exception as e:
         raise IOError(f"Error writing transforms file '{json_path}': {e}") from e
+
+
+def export_object_transforms_json(objects, output_path, target_preset="BLENDER_NATIVE"):
+    """Export selected object transforms with source/target conversion metadata."""
+    profile = get_object_transform_target_profile(target_preset)
+    conversion_matrix = profile["conversion_matrix"]
+    export_objects = _resolve_export_objects(objects)
+
+    object_entries = []
+    for obj in export_objects:
+        source_matrix = obj.matrix_world.copy()
+        target_matrix = conversion_matrix @ source_matrix
+        object_entries.append(
+            {
+                "name": obj.name,
+                "type": obj.type,
+                "parent": obj.parent.name if obj.parent else None,
+                "source_matrix_world": _matrix_to_rows(source_matrix),
+                "target_matrix_world": _matrix_to_rows(target_matrix),
+                "source_trs": _matrix_to_trs_payload(source_matrix),
+                "target_trs": _matrix_to_trs_payload(target_matrix),
+            }
+        )
+
+    payload = {
+        "schema_version": 1,
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "source_metadata": {
+            "coordinate_system": "Blender world",
+            "axis_up": "Z",
+            "axis_forward": "Y",
+            "handedness": "RIGHT",
+            "blender_version": ".".join(str(part) for part in bpy.app.version),
+            "object_count": len(object_entries),
+        },
+        "target_profile": {
+            "id": profile["id"],
+            "name": profile["name"],
+            "description": profile["description"],
+            "axis_up": profile["axis_up"],
+            "axis_forward": profile["axis_forward"],
+            "handedness": profile["handedness"],
+        },
+        "conversion_metadata": {
+            "rule": "target_matrix_world = conversion_matrix @ source_matrix_world",
+            "conversion_matrix": _matrix_to_rows(conversion_matrix),
+            "deterministic_order": "Objects are sorted by name before export.",
+        },
+        "objects": object_entries,
+    }
+    requested_id = profile.get("requested_id")
+    if requested_id:
+        payload["conversion_metadata"]["requested_preset"] = requested_id
+        payload["conversion_metadata"]["resolved_preset"] = profile["id"]
+
+    os.makedirs(output_path, exist_ok=True)
+    json_path = os.path.join(output_path, "object_transforms.json")
+    try:
+        _ensure_path_length(json_path, "object_transforms.json")
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+        _ensure_file_written(json_path, "object_transforms.json")
+    except Exception as e:
+        raise IOError(f"Error writing object transforms file '{json_path}': {e}") from e
+    return json_path
 
 
 def save_depth_map(render_result, output_path, normalize=True, format='PNG'):
