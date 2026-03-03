@@ -41,6 +41,9 @@ jobs:
           print("OK: addon python compile")
           PY
 
+      - name: Run cleanup core tests
+        run: python tests/python/test_splat_cleanup_core.py
+
       - name: Validate tracked blend files
         run: |
           python - <<'PY'
@@ -212,6 +215,7 @@ jobs:
               ("COLMAP binary smoke", "tests/smoke/smoke_colmap_binary_export.py", 600),
               ("asset-library capture smoke", "tests/smoke/smoke_asset_library_capture.py", 900),
               ("object-transform export smoke", "tests/smoke/smoke_object_transform_export.py", 600),
+              ("proxy-hull cleanup smoke", "tests/smoke/smoke_splat_cleanup_proxy_hull.py", 600),
               ("import-trained-splat smoke", "tests/smoke/smoke_import_trained_splat.py", 600),
           ]
 

@@ -24,6 +24,7 @@ nav:
   - Quick Start: quickstart.md
   - Capture And Exports: capture-and-exports.md
   - Training Backends: training-backends.md
+  - Splat Cleanup: splat-cleanup.md
   - Training Setup (CLI): guides/training-setup.md
   - Pipeline Setup (CLI): guides/pipeline-setup.md
   - Troubleshooting: troubleshooting.md

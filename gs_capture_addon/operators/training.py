@@ -20,6 +20,11 @@ from ..core.training import (
     stop_training
 )
 from ..core.training.base import TrainingConfig, TrainingStatus
+from ..core.splat_cleanup import (
+    default_cleanup_report_path,
+    default_proxy_hull_path,
+    run_proxy_hull_cleanup,
+)
 from ..utils.paths import normalize_path, validate_directory, check_disk_space
 from ..utils.folder_structure import (
     validate_structure,
@@ -29,6 +34,120 @@ from ..utils.folder_structure import (
     EXPORT_SETTINGS
 )
 from ..utils.errors import get_error_message
+
+
+def _resolve_output_and_backend(context):
+    """Resolve output path and selected backend instance."""
+    settings = context.scene.gs_capture_settings
+    process = get_running_process()
+
+    output_path = settings.training_output_path
+    if process and process.config.output_path:
+        output_path = process.config.output_path
+    output_path = normalize_path(output_path)
+
+    backend = get_all_backends().get(settings.training_backend)
+    if backend is None and process:
+        backend = process.backend
+
+    return output_path, backend
+
+
+def _resolve_proxy_hulls_path(training_data_path):
+    normalized_data = normalize_path(training_data_path)
+    if not normalized_data:
+        return ""
+    return normalize_path(default_proxy_hull_path(normalized_data))
+
+
+def _find_latest_cleaned_model(output_path):
+    """Find the newest '*.cleaned.ply' file in an output directory tree."""
+    if not output_path or not os.path.isdir(output_path):
+        return None
+
+    candidates = []
+    for walk_root, _, files in os.walk(output_path):
+        for file_name in files:
+            if file_name.lower().endswith(".cleaned.ply"):
+                candidate = os.path.join(walk_root, file_name)
+                try:
+                    mtime = os.path.getmtime(candidate)
+                except OSError:
+                    continue
+                candidates.append((mtime, candidate))
+
+    if not candidates:
+        return None
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return candidates[0][1]
+
+
+def _preferred_model_for_import(model_path, output_path, prefer_cleaned):
+    """Pick cleaned model when available and requested."""
+    if not model_path:
+        return None, False
+    if not prefer_cleaned:
+        return model_path, False
+
+    if model_path.lower().endswith(".cleaned.ply") and os.path.isfile(model_path):
+        return model_path, True
+
+    if model_path.lower().endswith(".ply"):
+        direct_cleaned = f"{model_path[:-4]}.cleaned.ply"
+        if os.path.isfile(direct_cleaned):
+            return direct_cleaned, True
+
+    latest_cleaned = _find_latest_cleaned_model(output_path)
+    if latest_cleaned:
+        return latest_cleaned, True
+
+    return model_path, False
+
+
+def _run_cleanup_for_context(context, output_path, backend, report_callback, strict):
+    """Run proxy-hull cleanup for the active context and report user-facing status."""
+    settings = context.scene.gs_capture_settings
+
+    proxy_hull_path = _resolve_proxy_hulls_path(settings.training_data_path)
+    if not proxy_hull_path:
+        message = "Splat cleanup requires a training data path with cleanup/proxy_hulls.json"
+        report_callback({'ERROR'} if strict else {'WARNING'}, message)
+        return None
+
+    if not os.path.isfile(proxy_hull_path):
+        message = f"Proxy hull artifact not found: {proxy_hull_path}"
+        report_callback({'ERROR'} if strict else {'WARNING'}, message)
+        return None
+
+    model_path = find_model_path_with_fallback(backend, output_path)
+    if not model_path:
+        message = "No trained .ply found in the selected output path"
+        report_callback({'ERROR'} if strict else {'WARNING'}, message)
+        return None
+
+    report_path = default_cleanup_report_path(output_path)
+    cleaned_path = f"{model_path[:-4]}.cleaned.ply" if model_path.lower().endswith(".ply") else f"{model_path}.cleaned.ply"
+
+    try:
+        cleanup_report = run_proxy_hull_cleanup(
+            model_path=model_path,
+            proxy_hull_path=proxy_hull_path,
+            hull_margin=settings.cleanup_hull_margin,
+            max_removal_ratio=settings.cleanup_max_removal_ratio,
+            output_path=cleaned_path,
+            report_path=report_path,
+        )
+    except Exception as exc:
+        report_callback({'ERROR'} if strict else {'WARNING'}, f"Splat cleanup failed: {exc}")
+        return None
+
+    settings.cleanup_last_report_path = cleanup_report.get("report_path", "")
+    settings.cleanup_last_cleaned_model_path = cleanup_report.get("output_model_path", "")
+    removed = cleanup_report.get("removed_points", 0)
+    total = cleanup_report.get("total_points", 0)
+    ratio = cleanup_report.get("removal_ratio", 0.0)
+    report_callback({'INFO'}, f"Splat cleanup complete: removed {removed}/{total} ({ratio:.1%})")
+    return cleanup_report
 
 
 class GSCAPTURE_OT_StartTraining(Operator):
@@ -158,6 +277,7 @@ class GSCAPTURE_OT_StartTraining(Operator):
 
                 # Check if process finished
                 if self._process and not self._process.is_running:
+                    self._run_auto_cleanup(context)
                     self._finish(context)
                     return {'FINISHED'}
 
@@ -176,6 +296,28 @@ class GSCAPTURE_OT_StartTraining(Operator):
         if self._timer:
             context.window_manager.event_timer_remove(self._timer)
             self._timer = None
+
+    def _run_auto_cleanup(self, context):
+        """Run optional post-training cleanup after successful completion."""
+        settings = context.scene.gs_capture_settings
+        if not settings.cleanup_enable_auto:
+            return
+        if not self._process:
+            return
+        if self._process.progress.status != TrainingStatus.COMPLETED:
+            return
+
+        output_path = normalize_path(self._process.config.output_path)
+        if not output_path:
+            return
+
+        _run_cleanup_for_context(
+            context=context,
+            output_path=output_path,
+            backend=self._process.backend,
+            report_callback=self.report,
+            strict=False,
+        )
 
     def _get_save_iterations(self, settings):
         """Generate save iteration list."""
@@ -274,6 +416,14 @@ class GSCAPTURE_OT_StartTraining(Operator):
         # Check export settings suggestions
         settings_warnings = self._get_settings_suggestions(context)
         warnings.extend(settings_warnings)
+
+        if settings.cleanup_enable_auto:
+            proxy_hulls_path = _resolve_proxy_hulls_path(normalized_data)
+            if not proxy_hulls_path or not os.path.isfile(proxy_hulls_path):
+                warnings.append(
+                    "Auto cleanup enabled but cleanup/proxy_hulls.json is missing in training data path. "
+                    "Run capture with 'Export Proxy Hulls' enabled."
+                )
 
         return len(errors) == 0, errors, warnings, normalized_data, normalized_output
 
@@ -410,6 +560,39 @@ class GSCAPTURE_OT_BrowseTrainingOutput(Operator):
         return {'RUNNING_MODAL'}
 
 
+class GSCAPTURE_OT_RunSplatCleanup(Operator):
+    """Run proxy-hull cleanup for the latest trained splat model."""
+
+    bl_idname = "gs_capture.run_splat_cleanup"
+    bl_label = "Run Splat Cleanup"
+    bl_description = "Remove floating splats outside captured proxy hulls"
+
+    @classmethod
+    def poll(cls, context):
+        process = get_running_process()
+        if process and process.is_running:
+            return False
+        settings = context.scene.gs_capture_settings
+        return bool(settings.training_output_path)
+
+    def execute(self, context):
+        output_path, backend = _resolve_output_and_backend(context)
+        if not output_path or not os.path.isdir(output_path):
+            self.report({'ERROR'}, "Training output directory not found")
+            return {'CANCELLED'}
+
+        report = _run_cleanup_for_context(
+            context=context,
+            output_path=output_path,
+            backend=backend,
+            report_callback=self.report,
+            strict=True,
+        )
+        if not report:
+            return {'CANCELLED'}
+        return {'FINISHED'}
+
+
 class GSCAPTURE_OT_OpenTrainingOutput(Operator):
     """Open training output folder or import trained splat."""
 
@@ -426,6 +609,7 @@ class GSCAPTURE_OT_OpenTrainingOutput(Operator):
         items=[
             ('OPEN_FOLDER', "Open Folder", "Open training output directory in file explorer"),
             ('IMPORT_SPLAT', "Import Trained Splat", "Import trained .ply from output into Blender"),
+            ('OPEN_CLEANUP_REPORT', "Open Cleanup Report", "Open cleanup_report.json"),
         ],
         default='OPEN_FOLDER',
         options={'SKIP_SAVE'},
@@ -440,25 +624,15 @@ class GSCAPTURE_OT_OpenTrainingOutput(Operator):
 
         if self.action == 'IMPORT_SPLAT':
             return self._import_trained_splat(context, output_path, backend)
+        if self.action == 'OPEN_CLEANUP_REPORT':
+            return self._open_cleanup_report(context, output_path)
 
         self._open_folder(output_path)
         return {'FINISHED'}
 
     def _resolve_output_and_backend(self, context):
         """Resolve output path and selected backend instance."""
-        settings = context.scene.gs_capture_settings
-        process = get_running_process()
-
-        output_path = settings.training_output_path
-        if process and process.config.output_path:
-            output_path = process.config.output_path
-        output_path = normalize_path(output_path)
-
-        backend = get_all_backends().get(settings.training_backend)
-        if backend is None and process:
-            backend = process.backend
-
-        return output_path, backend
+        return _resolve_output_and_backend(context)
 
     def _open_folder(self, output_path: str) -> None:
         """Open folder in native file explorer."""
@@ -474,7 +648,13 @@ class GSCAPTURE_OT_OpenTrainingOutput(Operator):
 
     def _import_trained_splat(self, context, output_path: str, backend):
         """Find and import trained .ply with API fallbacks."""
+        settings = context.scene.gs_capture_settings
         model_path = find_model_path_with_fallback(backend, output_path)
+        model_path, used_cleaned_model = _preferred_model_for_import(
+            model_path,
+            output_path,
+            settings.cleanup_prefer_cleaned_import,
+        )
         if not model_path:
             self.report({'ERROR'}, "No trained .ply found in the selected output path")
             return {'CANCELLED'}
@@ -504,9 +684,21 @@ class GSCAPTURE_OT_OpenTrainingOutput(Operator):
         self._apply_import_transform_settings(context, imported_objects)
         self._apply_selection_behavior(context, imported_objects, previous_selected, previous_active)
 
-        self.report({'INFO'}, f"Imported '{os.path.basename(model_path)}' using {importer_name}")
+        source_label = "cleaned model" if used_cleaned_model else "trained model"
+        self.report({'INFO'}, f"Imported '{os.path.basename(model_path)}' ({source_label}) using {importer_name}")
         if kiri_note:
             self.report({'INFO'}, kiri_note)
+        return {'FINISHED'}
+
+    def _open_cleanup_report(self, context, output_path: str):
+        settings = context.scene.gs_capture_settings
+        report_path = normalize_path(settings.cleanup_last_report_path) if settings.cleanup_last_report_path else ""
+        if not report_path:
+            report_path = default_cleanup_report_path(output_path)
+        if not os.path.isfile(report_path):
+            self.report({'ERROR'}, f"Cleanup report not found: {report_path}")
+            return {'CANCELLED'}
+        self._open_folder(report_path)
         return {'FINISHED'}
 
     def _get_kiri_status_note(self) -> str:
@@ -731,6 +923,7 @@ classes = [
     GSCAPTURE_OT_ClearTraining,
     GSCAPTURE_OT_BrowseTrainingData,
     GSCAPTURE_OT_BrowseTrainingOutput,
+    GSCAPTURE_OT_RunSplatCleanup,
     GSCAPTURE_OT_OpenTrainingOutput,
     GSCAPTURE_OT_ShowInstallInstructions,
     GSCAPTURE_OT_UseLastCapture,

@@ -37,3 +37,11 @@
 - `transforms.json` backends: JSON file must exist and match image paths
 - Windows: keep output paths short to avoid path-length issues
 
+## Post-Training Cleanup
+
+- The addon can run proxy-hull cleanup after training for all built-in backends.
+- Cleanup is geometry-based (`cleanup/proxy_hulls.json`) and does not depend on backend-specific prune behavior.
+- Backend-native knobs can still help reduce floaters:
+  - Nerfstudio: `cull_alpha_thresh`, `continue_cull_post_densification`, `use_scale_regularization`
+  - gsplat: strategy prune parameters such as `prune_opa`
+  - GS-Lightning / 3DGS: regularization and densification tuning

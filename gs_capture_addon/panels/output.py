@@ -69,6 +69,12 @@ class GSCAPTURE_PT_output_panel(Panel):
             if settings.mask_source == 'ALPHA':
                 box.label(text="Requires transparent background", icon='INFO')
 
+        layout.separator()
+        cleanup_box = layout.box()
+        cleanup_box.label(text="Cleanup Artifacts:", icon='MESH_ICOSPHERE')
+        cleanup_box.prop(settings, "cleanup_export_proxy_hulls", text="Export proxy_hulls.json")
+        cleanup_box.label(text="Used for automatic post-training splat cleanup", icon='INFO')
+
         # Checkpoint settings
         layout.separator()
         layout.label(text="Resume/Checkpoint:", icon='FILE_REFRESH')

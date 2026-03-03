@@ -189,6 +189,12 @@ class GSCaptureSettings(PropertyGroup):
         default='GSL'
     )
 
+    cleanup_export_proxy_hulls: BoolProperty(
+        name="Export Proxy Hulls",
+        description="Export per-object proxy hulls for post-training splat cleanup",
+        default=True
+    )
+
     # ==========================================================================
     # CAMERA SETTINGS
     # ==========================================================================
@@ -599,6 +605,57 @@ class GSCaptureSettings(PropertyGroup):
         name="Extra Arguments",
         description="Additional command-line arguments for training",
         default=""
+    )
+
+    cleanup_enable_auto: BoolProperty(
+        name="Auto Cleanup After Training",
+        description="Automatically run post-training cleanup using exported proxy hulls",
+        default=True
+    )
+
+    cleanup_mode: EnumProperty(
+        name="Cleanup Mode",
+        description="Post-training cleanup strategy",
+        items=[
+            ('PROXY_HULL', "Proxy Hull Filter", "Remove splats outside exported proxy hull volumes"),
+        ],
+        default='PROXY_HULL'
+    )
+
+    cleanup_hull_margin: FloatProperty(
+        name="Hull Margin",
+        description="Margin added to proxy hull tests in world units",
+        default=0.01,
+        min=0.0,
+        max=10.0
+    )
+
+    cleanup_max_removal_ratio: FloatProperty(
+        name="Max Removal Ratio",
+        description="Safety guard: abort cleanup if removed splats exceed this ratio",
+        default=0.70,
+        min=0.05,
+        max=0.99
+    )
+
+    cleanup_prefer_cleaned_import: BoolProperty(
+        name="Prefer Cleaned Splat Import",
+        description="Import *.cleaned.ply when available",
+        default=True
+    )
+
+    cleanup_last_report_path: StringProperty(
+        name="Cleanup Report Path",
+        description="Last generated cleanup report path",
+        default="",
+        subtype='FILE_PATH'
+    )
+
+    cleanup_last_cleaned_model_path: StringProperty(
+        name="Cleaned Model Path",
+        description="Last generated cleaned model path",
+        default="",
+        subtype='FILE_PATH'
     )
 
     # Densification settings (3DGS specific)

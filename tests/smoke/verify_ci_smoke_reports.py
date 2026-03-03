@@ -65,6 +65,7 @@ def main() -> int:
     import_splat_report = load_report(REPORT_ROOT / "import_trained_splat_report.json")
     asset_library_report = load_report(REPORT_ROOT / "asset_library_capture_report.json")
     object_transform_report = load_report(REPORT_ROOT / "object_transform_export_report.json")
+    cleanup_report = load_report(REPORT_ROOT / "splat_cleanup_proxy_hull_report.json")
 
     if release_report.get("errors"):
         failures.append("release smoke report contains errors")
@@ -203,6 +204,27 @@ def main() -> int:
         if object_transform_checks.get(key) is not True:
             failures.append(f"object-transform check failed: {key}")
 
+    if cleanup_report.get("errors"):
+        failures.append("cleanup smoke report contains errors")
+    if cleanup_report.get("success") is not True:
+        failures.append("cleanup smoke test failed")
+
+    cleanup_checks = cleanup_report.get("checks", {})
+    required_cleanup_checks = [
+        "capture_finished",
+        "proxy_hulls_exists",
+        "proxy_hulls_has_objects",
+        "cleanup_operator_finished",
+        "cleaned_ply_exists",
+        "cleanup_report_exists",
+        "removed_points_positive",
+        "kept_points_expected",
+        "proxy_hull_path_used",
+    ]
+    for key in required_cleanup_checks:
+        if cleanup_checks.get(key) is not True:
+            failures.append(f"cleanup check failed: {key}")
+
     if failures:
         print("Smoke verification failed:")
         for failure in failures:
@@ -218,6 +240,7 @@ def main() -> int:
     print(f"- import-splat checks: {import_checks}")
     print(f"- asset-library checks: {asset_checks}")
     print(f"- object-transform checks: {object_transform_checks}")
+    print(f"- cleanup checks: {cleanup_checks}")
     return 0
 
 
