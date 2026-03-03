@@ -46,6 +46,12 @@ def get_training_backend_items(self, context):
     return items
 
 
+def get_asset_library_items(self, context):
+    """Dynamic enum callback for asset libraries from Blender preferences."""
+    from .utils.asset_library import asset_library_enum_items
+    return asset_library_enum_items(context=context)
+
+
 class GSCaptureObjectItem(PropertyGroup):
     """Single object reference for grouping."""
     obj: PointerProperty(
@@ -348,6 +354,7 @@ class GSCaptureSettings(PropertyGroup):
             ('EACH_SELECTED', "Each Selected", "Capture each selected object individually"),
             ('COLLECTIONS', "All Collections", "Capture each collection separately"),
             ('GROUPS', "Object Groups", "Use custom object groups"),
+            ('ASSET_LIBRARY', "Asset Library", "Capture each .blend file from a configured Blender asset library"),
         ],
         default='SCENE'
     )
@@ -367,6 +374,24 @@ class GSCaptureSettings(PropertyGroup):
         name="Include Children",
         description="Include child objects of selected objects",
         default=True
+    )
+
+    asset_library_name: EnumProperty(
+        name="Asset Library",
+        description="Asset library configured in Blender preferences",
+        items=get_asset_library_items,
+    )
+
+    asset_library_recursive: BoolProperty(
+        name="Recursive Scan",
+        description="Scan subfolders when searching for .blend files",
+        default=True,
+    )
+
+    asset_library_filename_filter: StringProperty(
+        name="Filename Filter",
+        description="Case-insensitive substring filter for .blend filenames (leave empty for all files)",
+        default="",
     )
 
     object_groups: CollectionProperty(type=GSCaptureObjectGroup)

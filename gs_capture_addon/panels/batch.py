@@ -41,6 +41,13 @@ class GSCAPTURE_PT_batch_panel(Panel):
             row.scale_y = 1.3
             row.operator("gs_capture.capture_collection", text="Capture Collection", icon='RENDER_STILL')
 
+        if settings.batch_mode == 'ASSET_LIBRARY':
+            box = layout.box()
+            box.label(text="Asset Library Settings:", icon='ASSET_MANAGER')
+            box.prop(settings, "asset_library_name")
+            box.prop(settings, "asset_library_recursive")
+            box.prop(settings, "asset_library_filename_filter")
+
         layout.prop(settings, "include_children")
 
         # Scene analysis for batch planning
