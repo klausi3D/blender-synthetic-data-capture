@@ -63,6 +63,7 @@ def main() -> int:
     coverage_edge_report = load_report(REPORT_ROOT / "coverage_edge_cases_report.json")
     colmap_binary_report = load_report(REPORT_ROOT / "colmap_binary_report.json")
     import_splat_report = load_report(REPORT_ROOT / "import_trained_splat_report.json")
+    asset_library_report = load_report(REPORT_ROOT / "asset_library_capture_report.json")
     object_transform_report = load_report(REPORT_ROOT / "object_transform_export_report.json")
 
     if release_report.get("errors"):
@@ -162,6 +163,27 @@ def main() -> int:
         if import_checks.get(key) is not True:
             failures.append(f"import-splat check failed: {key}")
 
+    if asset_library_report.get("errors"):
+        failures.append("asset-library report contains errors")
+    if asset_library_report.get("success") is not True:
+        failures.append("asset-library smoke test failed")
+
+    asset_checks = asset_library_report.get("checks", {})
+    required_asset_checks = [
+        "manifest_exists",
+        "manifest_has_expected_files",
+        "manifest_total_is_three",
+        "manifest_succeeded_is_two",
+        "manifest_failed_is_one",
+        "non_mesh_asset_failed",
+        "success_outputs_exist",
+        "continued_after_failure",
+        "filename_filter_excluded_skip_file",
+    ]
+    for key in required_asset_checks:
+        if asset_checks.get(key) is not True:
+            failures.append(f"asset-library check failed: {key}")
+
     if object_transform_report.get("errors"):
         failures.append("object-transform report contains errors")
     if object_transform_report.get("success") is not True:
@@ -194,6 +216,7 @@ def main() -> int:
     print(f"- coverage-edge checks: {coverage_checks}")
     print(f"- colmap-binary checks: {binary_checks}")
     print(f"- import-splat checks: {import_checks}")
+    print(f"- asset-library checks: {asset_checks}")
     print(f"- object-transform checks: {object_transform_checks}")
     return 0
 
