@@ -45,3 +45,13 @@ from .errors import (
     ERROR_MESSAGES,
     get_error_message,
 )
+
+from .asset_library import (
+    NO_ASSET_LIBRARY_ID,
+    list_asset_libraries,
+    asset_library_enum_items,
+    resolve_asset_library_path,
+    discover_asset_library_blend_files,
+    make_output_subfolder_name,
+    relative_blend_path,
+)
