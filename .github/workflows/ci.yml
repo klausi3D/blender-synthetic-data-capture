@@ -217,6 +217,7 @@ jobs:
               ("object-transform export smoke", "tests/smoke/smoke_object_transform_export.py", 600),
               ("proxy-hull cleanup smoke", "tests/smoke/smoke_splat_cleanup_proxy_hull.py", 600),
               ("import-trained-splat smoke", "tests/smoke/smoke_import_trained_splat.py", 600),
+              ("headless capture smoke", "tests/smoke/smoke_headless_capture.py", 600),
           ]
 
           for name, rel_script, timeout_seconds in scripts:

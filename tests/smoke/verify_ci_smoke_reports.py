@@ -66,6 +66,7 @@ def main() -> int:
     asset_library_report = load_report(REPORT_ROOT / "asset_library_capture_report.json")
     object_transform_report = load_report(REPORT_ROOT / "object_transform_export_report.json")
     cleanup_report = load_report(REPORT_ROOT / "splat_cleanup_proxy_hull_report.json")
+    headless_report = load_report(REPORT_ROOT / "headless_capture_report.json")
 
     if release_report.get("errors"):
         failures.append("release smoke report contains errors")
@@ -225,6 +226,25 @@ def main() -> int:
         if cleanup_checks.get(key) is not True:
             failures.append(f"cleanup check failed: {key}")
 
+    if headless_report.get("errors"):
+        failures.append("headless-capture report contains errors")
+    if headless_report.get("success") is not True:
+        failures.append("headless-capture smoke test failed")
+
+    headless_checks = headless_report.get("checks", {})
+    required_headless_checks = [
+        "images_dir_exists",
+        "images_match_camera_count",
+        "sparse_dir_exists",
+        "transforms_json_exists",
+        "transforms_json_valid",
+        "transforms_json_frames_match",
+        "depth_matches_images",
+    ]
+    for key in required_headless_checks:
+        if headless_checks.get(key) is not True:
+            failures.append(f"headless-capture check failed: {key}")
+
     if failures:
         print("Smoke verification failed:")
         for failure in failures:
@@ -241,6 +261,7 @@ def main() -> int:
     print(f"- asset-library checks: {asset_checks}")
     print(f"- object-transform checks: {object_transform_checks}")
     print(f"- cleanup checks: {cleanup_checks}")
+    print(f"- headless-capture checks: {headless_checks}")
     return 0
 
 

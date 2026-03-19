@@ -1,16 +1,61 @@
-# Gaussian Splatting Training Pipeline Configuration
-# =================================================
-# Copy this file and modify for your setup
+# Gaussian Splatting Pipeline Configuration
+# ==========================================
+# Copy this file and modify for your setup.
+# Supports the full pipeline: capture → training → cleanup.
+# To use capture, run via: python tools/pipeline.py --config <this-file>
 
-# Input folders containing captured images
+# Path to Blender executable (for capture phase; auto-detected if "blender")
+blender_path: "blender"
+
+# Input .blend scene file (omit to skip capture and use pre-existing folders)
+# scene: "C:/scenes/sponza.blend"
+
+# Input folders containing captured images (used when scene is not set)
 # Each folder should have an 'images' subfolder or images in root
 input_folders:
   - "/path/to/gs_capture/Object1"
   - "/path/to/gs_capture/Object2"
   # Or use a parent folder and --recursive flag
 
-# Output directory for trained models
+# Output directory for trained models (and captures, if scene is set)
 output_base: "/path/to/trained_models"
+
+# ─── Capture Settings (optional — used when 'scene' is set) ──────────────
+# These settings drive tools/headless_capture.py via the pipeline orchestrator.
+# For capture-only runs, you can also use headless_capture.py directly.
+capture:
+  cameras: 150
+  distribution: FIBONACCI     # FIBONACCI | HEMISPHERE_TOP | HEMISPHERE_BOTTOM | RING | MULTI_RING
+  preset: "3dgs"              # 3dgs | nerfstudio | gsplat | instant_ngp | postshot | polycam | luma_ai
+  engine: EEVEE               # EEVEE | CYCLES
+  speed_preset: BALANCED      # FAST | BALANCED | QUALITY | CUSTOM
+  resolution: [1920, 1080]
+  transparent_background: true
+  checkpoints: true
+  auto_resume: true
+  exports:
+    colmap: true
+    colmap_binary: false
+    transforms_json: true
+    depth: false
+    normals: false
+    masks: false
+    mask_source: ALPHA        # ALPHA | OBJECT_INDEX
+
+# Items to capture (if omitted and scene is set, captures all collections)
+# items:
+#   - type: collection
+#     name: "Furniture"
+#     cameras: 200
+#   - type: collection
+#     name: "Architecture"
+
+# ─── Post-Training Cleanup ────────────────────────────────────────────────
+cleanup:
+  enabled: false
+  proxy_hulls: true
+  hull_margin: 0.01
+  max_removal_ratio: 0.70
 
 # COLMAP Settings
 # ===============
