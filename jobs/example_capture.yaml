@@ -68,11 +68,6 @@ items:
   - type: collection
     name: "Architecture"
 
-  # Single-object capture
-  # - type: object
-  #   name: "Vase"
-  #   cameras: 80
-
 # ─── Training Settings ────────────────────────────────────────────────────
 training:
   enabled: true

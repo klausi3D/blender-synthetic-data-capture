@@ -54,10 +54,15 @@ class CaptureConfig:
 
 @dataclass
 class CaptureItemConfig:
-    """A single item to capture (collection or object)."""
-    type: str = "collection"  # "collection" | "object"
+    """A single item to capture.
+
+    Currently only ``type="collection"`` is supported by the headless
+    capture script.  Per-item ``cameras`` overrides are reserved for
+    future use and currently ignored (the global camera count applies).
+    """
+    type: str = "collection"
     name: str = ""
-    cameras: Optional[int] = None  # per-item override
+    cameras: Optional[int] = None  # reserved — not yet wired to runtime
 
 
 @dataclass

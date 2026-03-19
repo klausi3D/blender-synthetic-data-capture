@@ -203,7 +203,7 @@ def find_gs_training_script() -> Optional[Path]:
 def run_training_for_folder(folder: Path, training_config: dict,
                             output_base: str, dry_run: bool = False) -> bool:
     """Run GS training for a single capture folder."""
-    backend = training_config.get("backend", "original")
+    backend = training_config.get("backend") or training_config.get("implementation", "original")
     iterations = training_config.get("iterations", 30000)
     save_iters = training_config.get("save_iterations", [7000, 15000, 30000])
     white_bg = training_config.get("white_background", True)
@@ -278,9 +278,13 @@ def run_training_for_folder(folder: Path, training_config: dict,
     log(f"Training: {folder.name} (backend={backend}, iters={iterations})")
     log(f"  Command: {' '.join(cmd)}")
 
+    # Training timeout: 4 hours default (training can be very long)
+    training_timeout = training_config.get("timeout", 14400)
+
     start = time.monotonic()
     try:
-        result = subprocess.run(cmd, env=env, capture_output=False)
+        result = subprocess.run(cmd, env=env, capture_output=False,
+                                timeout=training_timeout)
         elapsed = time.monotonic() - start
 
         if result.returncode == 0:
@@ -290,6 +294,10 @@ def run_training_for_folder(folder: Path, training_config: dict,
             log(f"Training failed: {folder.name} "
                 f"(exit={result.returncode}, {elapsed:.0f}s)", "ERROR")
             return False
+    except subprocess.TimeoutExpired:
+        log(f"Training timed out for {folder.name} after {training_timeout}s",
+            "ERROR")
+        return False
     except Exception as e:
         log(f"Training error for {folder.name}: {e}", "ERROR")
         return False

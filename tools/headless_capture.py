@@ -28,6 +28,7 @@ import argparse
 import json
 import os
 import sys
+import tempfile
 import time
 import traceback
 from pathlib import Path
@@ -560,6 +561,7 @@ STATE = {
     "start_time": 0.0,
     "args": None,
     "timeout": TIMEOUT_SECONDS,
+    "tick_count": 0,
 }
 
 
@@ -591,17 +593,17 @@ def tick() -> float | None:
         # ---- CAPTURING: wait for completion ----
         if STATE["phase"] == "capturing":
             settings = bpy.context.scene.gs_capture_settings
+            STATE["tick_count"] += 1
 
             # Still running?
             if settings.is_rendering or settings.batch_running:
-                # Progress logging every ~10 ticks
+                # Progress logging every ~10 ticks (~3 seconds)
                 current = settings.capture_current
                 total = settings.capture_total
-                if total > 0 and current > 0:
+                if total > 0 and current > 0 and STATE["tick_count"] % 10 == 0:
                     pct = (current / total) * 100
-                    if int(elapsed) % 3 == 0:  # log every ~3 seconds
-                        log(f"Progress: {current}/{total} ({pct:.0f}%) "
-                            f"elapsed={elapsed:.0f}s")
+                    log(f"Progress: {current}/{total} ({pct:.0f}%) "
+                        f"elapsed={elapsed:.0f}s")
                 return TICK_INTERVAL
 
             # Capture finished
@@ -658,7 +660,7 @@ def tick() -> float | None:
         # Try to write error summary
         try:
             args = STATE.get("args")
-            output_dir = getattr(args, "output", None) or "/tmp/headless_capture_error"
+            output_dir = getattr(args, "output", None) or str(Path(tempfile.gettempdir()) / "headless_capture_error")
             Path(output_dir).mkdir(parents=True, exist_ok=True)
             error_report = Path(output_dir) / "headless_capture_summary.json"
             error_report.write_text(json.dumps({
