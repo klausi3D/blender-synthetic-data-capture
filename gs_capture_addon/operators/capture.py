@@ -25,6 +25,7 @@ from ..core.camera import (
 from ..core.export import (
     export_colmap_cameras,
     export_transforms_json,
+    export_object_transforms_json,
     cleanup_compositor_nodes,
     extract_alpha_mask,
     get_image_extension,
@@ -330,6 +331,31 @@ class GSCAPTURE_OT_capture_selected(Operator):
                     f"Re-run capture to generate missing {label.lower()} files",
                 )
 
+        def add_single_file_check(label, file_path, required):
+            found = 0
+            try:
+                if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                    found = 1
+            except OSError:
+                found = 0
+
+            check = {
+                "name": label,
+                "folder": os.path.dirname(file_path),
+                "pattern": os.path.basename(file_path),
+                "expected": 1 if required else 0,
+                "found": found,
+                "required": required,
+            }
+            checks.append(check)
+
+            if required and found < 1:
+                result.add_error(
+                    "export",
+                    f"{label}: expected 1, found {found}",
+                    f"Re-run capture to generate missing {label.lower()}",
+                )
+
         add_check("images", self._images_path, f"image_*.{image_ext}", required=True)
 
         if settings.export_depth:
@@ -350,6 +376,13 @@ class GSCAPTURE_OT_capture_selected(Operator):
                 pattern = f"mask_*.{self._object_index_mask_extension()}"
             add_check("masks", self._masks_path, pattern, required=True)
 
+        if settings.export_object_transforms:
+            add_single_file_check(
+                "object_transforms",
+                os.path.join(self._output_path, "object_transforms.json"),
+                required=True,
+            )
+
         return result, checks
 
     def _write_validation_report(self, settings, image_ext, export_failures, post_result, checks):
@@ -367,6 +400,8 @@ class GSCAPTURE_OT_capture_selected(Operator):
                 "export_errors": self._export_errors,
                 "mask_source": settings.mask_source,
                 "mask_format": settings.mask_format,
+                "object_transform_export_enabled": settings.export_object_transforms,
+                "object_transform_target_preset": settings.object_transform_target_preset,
                 "image_extension": image_ext,
             },
             "pre_capture_validation": validation_result_to_dict(
@@ -1616,6 +1651,16 @@ class GSCAPTURE_OT_capture_selected(Operator):
                 )
             except Exception as e:
                 export_failures.append(f"transforms.json export failed: {e}")
+
+        if settings.export_object_transforms:
+            try:
+                export_object_transforms_json(
+                    self._target_objects,
+                    self._output_path,
+                    target_preset=settings.object_transform_target_preset,
+                )
+            except Exception as e:
+                export_failures.append(f"object_transforms.json export failed: {e}")
 
         if export_failures:
             self._export_errors = True

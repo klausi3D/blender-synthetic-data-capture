@@ -238,6 +238,7 @@ jobs:
               ("coverage edge-case smoke", "tests/smoke/smoke_coverage_edge_cases.py", 600),
               ("COLMAP binary smoke", "tests/smoke/smoke_colmap_binary_export.py", 600),
               ("asset-library capture smoke", "tests/smoke/smoke_asset_library_capture.py", 900),
+              ("object-transform export smoke", "tests/smoke/smoke_object_transform_export.py", 600),
               ("import-trained-splat smoke", "tests/smoke/smoke_import_trained_splat.py", 600),
           ]
 

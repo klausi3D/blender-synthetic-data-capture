@@ -46,6 +46,15 @@ def get_training_backend_items(self, context):
     return items
 
 
+OBJECT_TRANSFORM_TARGET_PRESET_ITEMS = [
+    ('BLENDER_NATIVE', "Blender Native", "Blender world coordinates without conversion"),
+    ('NERF', "NeRF / OpenGL", "NeRF/OpenGL-style coordinates"),
+    ('COLMAP', "COLMAP / OpenCV", "COLMAP/OpenCV-oriented coordinates"),
+    ('UNITY', "Unity", "Unity coordinates (Y-up, Z-forward, left-handed)"),
+    ('UNREAL', "Unreal Engine", "Unreal coordinates (Z-up, X-forward, left-handed)"),
+]
+
+
 def get_asset_library_items(self, context):
     """Dynamic enum callback for asset libraries from Blender preferences."""
     from .utils.asset_library import asset_library_enum_items
@@ -127,6 +136,19 @@ class GSCaptureSettings(PropertyGroup):
         name="Export transforms.json",
         description="Export camera data in NeRF/3DGS format",
         default=True
+    )
+
+    export_object_transforms: BoolProperty(
+        name="Export object_transforms.json",
+        description="Export per-object source/target transform sidecar",
+        default=False
+    )
+
+    object_transform_target_preset: EnumProperty(
+        name="Transform Target Preset",
+        description="Target coordinate system for converted object transforms",
+        items=OBJECT_TRANSFORM_TARGET_PRESET_ITEMS,
+        default='BLENDER_NATIVE'
     )
 
     export_depth: BoolProperty(
