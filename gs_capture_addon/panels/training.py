@@ -5,6 +5,7 @@ This panel provides controls for training Gaussian Splatting models
 directly from Blender, with real-time progress monitoring.
 """
 
+import json
 import os
 import time
 import bpy
@@ -172,6 +173,33 @@ def _get_data_path_status(settings, backend_id):
     )
 
 
+def _get_proxy_hull_status(settings):
+    """Get status indicator for proxy_hulls.json in the selected training data path."""
+    data_path = settings.training_data_path
+    if not data_path:
+        return 'QUESTION', "Set training data path to locate proxy hulls", False, ""
+
+    data_path_normalized = os.path.normpath(bpy.path.abspath(data_path))
+    if not os.path.isdir(data_path_normalized):
+        return 'ERROR', "Training data path does not exist", False, ""
+
+    hull_path = os.path.join(data_path_normalized, "cleanup", "proxy_hulls.json")
+    if not os.path.isfile(hull_path):
+        return 'ERROR', "Missing cleanup/proxy_hulls.json", False, hull_path
+
+    try:
+        with open(hull_path, "r", encoding="utf-8") as handle:
+            payload = json.load(handle)
+        object_count = int(payload.get("object_count", 0))
+    except Exception:
+        return 'ERROR', "proxy_hulls.json is invalid", False, hull_path
+
+    if object_count <= 0:
+        return 'ERROR', "proxy_hulls.json has no hull objects", False, hull_path
+
+    return 'CHECKMARK', f"Proxy hulls ready ({object_count} objects)", True, hull_path
+
+
 # =============================================================================
 # OPERATORS
 # =============================================================================
@@ -321,6 +349,27 @@ class GSCAPTURE_PT_TrainingPanel(Panel):
             text="Falls back to Blender PLY import if no KIRI API is detected",
             icon='INFO',
         )
+
+        # Cleanup controls
+        layout.separator()
+        cleanup_box = layout.box()
+        cleanup_box.label(text="Post-Training Cleanup:", icon='MOD_REMESH')
+        cleanup_box.prop(settings, "cleanup_enable_auto")
+        cleanup_box.prop(settings, "cleanup_mode", text="Mode")
+        cleanup_box.prop(settings, "cleanup_hull_margin", text="Hull Margin")
+        cleanup_box.prop(settings, "cleanup_max_removal_ratio", text="Max Removal Ratio")
+        cleanup_box.prop(settings, "cleanup_prefer_cleaned_import")
+
+        status_icon, status_text, has_proxy_hulls, _ = _get_proxy_hull_status(settings)
+        status_row = cleanup_box.row()
+        status_row.alert = not has_proxy_hulls
+        status_row.label(text=status_text, icon=status_icon)
+
+        actions_row = cleanup_box.row(align=True)
+        actions_row.enabled = bool(settings.training_output_path and has_proxy_hulls)
+        actions_row.operator("gs_capture.run_splat_cleanup", text="Run Cleanup Now", icon='BRUSH_DATA')
+        report_op = actions_row.operator("gs_capture.open_training_output", text="Open Cleanup Report", icon='TEXT')
+        report_op.action = 'OPEN_CLEANUP_REPORT'
 
         # Training parameters
         layout.separator()

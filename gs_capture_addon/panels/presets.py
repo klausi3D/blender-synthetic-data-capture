@@ -8,7 +8,7 @@ frameworks like 3DGS, Nerfstudio, Postshot, Polycam, and more.
 import bpy
 from bpy.types import Panel
 
-from ..core.presets import PRESETS, get_preset_enum_items
+from ..core.presets import PRESETS
 
 
 class GSCAPTURE_PT_PresetsPanel(Panel):

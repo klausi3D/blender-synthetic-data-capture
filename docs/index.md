@@ -22,3 +22,4 @@ This site is the user-facing documentation for installation, capture workflows, 
 2. [Quick Start](quickstart.md)
 3. [Capture And Exports](capture-and-exports.md)
 4. [Training Backends](training-backends.md)
+5. [Splat Cleanup](splat-cleanup.md)

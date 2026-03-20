@@ -35,6 +35,7 @@ from ..core.export import (
     configure_output_file_node,
     set_output_file_basename,
 )
+from ..core.proxy_hulls import export_proxy_hulls
 from ..core.validation import (
     ValidationLevel,
     ValidationResult,
@@ -201,6 +202,7 @@ class GSCAPTURE_OT_capture_selected(Operator):
     _render_complete_handler: object
     _render_cancel_handler: object
     _render_handlers_registered: bool
+    _proxy_hull_export_path: str
 
     preflight_only: BoolProperty(
         name="Validation Summary Only",
@@ -403,6 +405,11 @@ class GSCAPTURE_OT_capture_selected(Operator):
                 "object_transform_export_enabled": settings.export_object_transforms,
                 "object_transform_target_preset": settings.object_transform_target_preset,
                 "image_extension": image_ext,
+                "proxy_hull_export_enabled": bool(getattr(settings, "cleanup_export_proxy_hulls", False)),
+                "proxy_hull_artifact_path": self._proxy_hull_export_path or "",
+                "proxy_hull_artifact_exists": bool(
+                    self._proxy_hull_export_path and os.path.exists(self._proxy_hull_export_path)
+                ),
             },
             "pre_capture_validation": validation_result_to_dict(
                 getattr(self, "_pre_capture_validation_result", None)
@@ -976,6 +983,7 @@ class GSCAPTURE_OT_capture_selected(Operator):
         self._render_complete_handler = None
         self._render_cancel_handler = None
         self._render_handlers_registered = False
+        self._proxy_hull_export_path = ""
 
         settings = context.scene.gs_capture_settings
         rd = context.scene.render
@@ -1661,6 +1669,17 @@ class GSCAPTURE_OT_capture_selected(Operator):
                 )
             except Exception as e:
                 export_failures.append(f"object_transforms.json export failed: {e}")
+
+        if settings.cleanup_export_proxy_hulls:
+            try:
+                proxy_hull_path, _ = export_proxy_hulls(
+                    self._output_path,
+                    self._target_objects,
+                    recommended_margin=settings.cleanup_hull_margin,
+                )
+                self._proxy_hull_export_path = proxy_hull_path
+            except Exception as exc:
+                self.report({'WARNING'}, f"Proxy hull export skipped: {exc}")
 
         if export_failures:
             self._export_errors = True

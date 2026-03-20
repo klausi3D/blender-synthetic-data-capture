@@ -5,10 +5,8 @@ Calculates a simple complexity score and provides recommendations
 for optimal capture settings based on scene geometry and materials.
 """
 
-import bpy
-import math
 from dataclasses import dataclass
-from typing import List, Tuple, Optional
+from typing import List, Tuple
 from enum import Enum
 
 

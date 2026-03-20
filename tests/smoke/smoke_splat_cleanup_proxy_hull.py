@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Smoke test for optional COLMAP binary export artifacts."""
+"""Smoke test for proxy-hull splat cleanup integration."""
 
 from __future__ import annotations
 
 import json
 import shutil
-import struct
 import sys
 import time
 import traceback
@@ -13,12 +12,11 @@ from pathlib import Path
 
 import bpy
 
-
 ROOT = Path(__file__).resolve().parents[2]
 OUT_ROOT = ROOT / "training_out" / "smoke_feature_verification"
-CASE_DIR = OUT_ROOT / "colmap_binary"
-REPORT_PATH = OUT_ROOT / "colmap_binary_report.json"
-
+CAPTURE_DIR = OUT_ROOT / "cleanup_proxy_hull_capture"
+TRAIN_DIR = OUT_ROOT / "cleanup_proxy_hull_training"
+REPORT_PATH = OUT_ROOT / "splat_cleanup_proxy_hull_report.json"
 
 STATE = {
     "phase": "init",
@@ -37,7 +35,7 @@ STATE = {
 
 
 def log(message: str) -> None:
-    print(f"[GS_COLMAP_BIN] {message}")
+    print(f"[GS_CLEANUP_SMOKE] {message}")
     STATE["report"]["events"].append(message)
 
 
@@ -99,27 +97,22 @@ def setup_scene() -> None:
     if hasattr(scene, "cycles"):
         scene.cycles.samples = 16
 
-    scene.render.resolution_x = 512
-    scene.render.resolution_y = 512
+    scene.render.resolution_x = 384
+    scene.render.resolution_y = 384
     scene.render.image_settings.file_format = "PNG"
     scene.render.image_settings.color_mode = "RGBA"
 
 
-def configure_settings() -> None:
+def configure_capture_settings() -> None:
     settings = bpy.context.scene.gs_capture_settings
-    settings.output_path = str(CASE_DIR)
-    settings.target_collection = ""
+    settings.output_path = str(CAPTURE_DIR)
     settings.use_adaptive_capture = False
-    settings.camera_count = 8
+    settings.camera_count = 4
     settings.camera_distribution = "FIBONACCI"
     settings.render_speed_preset = "FAST"
     settings.transparent_background = False
 
-    settings.export_colmap = True
-    settings.export_colmap_binary = True
-    settings.colmap_initial_point_count = 1500
-    settings.colmap_point_sampling = "SURFACE_FALLBACK"
-
+    settings.export_colmap = False
     settings.export_transforms_json = False
     settings.export_depth = False
     settings.export_normals = False
@@ -128,56 +121,108 @@ def configure_settings() -> None:
     settings.auto_resume = False
     settings.cancel_requested = False
 
-
-def read_u64_header(path: Path) -> int:
-    with path.open("rb") as handle:
-        header = handle.read(8)
-    if len(header) != 8:
-        return -1
-    return int(struct.unpack("<Q", header)[0])
+    settings.cleanup_export_proxy_hulls = True
+    settings.cleanup_hull_margin = 0.0
 
 
 def start_capture() -> None:
     result = bpy.ops.gs_capture.capture_selected()
-    result_set = set(result)
-    if "RUNNING_MODAL" not in result_set:
+    if "RUNNING_MODAL" not in set(result):
         raise RuntimeError(f"Capture failed to start: {result}")
     STATE["capture_started_at"] = time.time()
-    log("Binary COLMAP smoke capture started")
+    log("Capture started")
 
 
-def evaluate_results() -> None:
-    colmap_dir = CASE_DIR / "sparse" / "0"
-    images_dir = CASE_DIR / "images"
+def write_dummy_training_ply(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "\n".join(
+            [
+                "ply",
+                "format ascii 1.0",
+                "element vertex 5",
+                "property float x",
+                "property float y",
+                "property float z",
+                "property float opacity",
+                "end_header",
+                "0.0 0.0 0.0 0.8",
+                "0.4 -0.2 0.3 0.6",
+                "-0.5 0.5 -0.4 0.2",
+                "1.9 0.0 0.0 0.1",
+                "0.0 0.0 -1.8 0.1",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
-    cameras_txt = colmap_dir / "cameras.txt"
-    images_txt = colmap_dir / "images.txt"
-    points_txt = colmap_dir / "points3D.txt"
-    cameras_bin = colmap_dir / "cameras.bin"
-    images_bin = colmap_dir / "images.bin"
-    points_bin = colmap_dir / "points3D.bin"
-    validation_report = CASE_DIR / "validation_report.json"
-    rendered_images = len(list(images_dir.glob("image_*.png")))
+
+def read_vertex_count(path: Path) -> int:
+    with path.open("rb") as handle:
+        while True:
+            line = handle.readline()
+            if not line:
+                break
+            decoded = line.decode("ascii", errors="replace").strip()
+            if decoded.startswith("element vertex "):
+                return int(decoded.split()[-1])
+            if decoded == "end_header":
+                break
+    return -1
+
+
+def run_cleanup_and_evaluate() -> None:
+    settings = bpy.context.scene.gs_capture_settings
+
+    hull_path = CAPTURE_DIR / "cleanup" / "proxy_hulls.json"
+    write_dummy_training_ply(TRAIN_DIR / "point_cloud" / "iteration_20" / "point_cloud.ply")
+
+    settings.training_data_path = str(CAPTURE_DIR)
+    settings.training_output_path = str(TRAIN_DIR)
+    settings.cleanup_enable_auto = False
+    settings.cleanup_hull_margin = 0.0
+    settings.cleanup_max_removal_ratio = 0.9
+    settings.cleanup_prefer_cleaned_import = True
+
+    cleanup_result = bpy.ops.gs_capture.run_splat_cleanup()
+
+    cleaned_path = TRAIN_DIR / "point_cloud" / "iteration_20" / "point_cloud.cleaned.ply"
+    cleanup_report_path = TRAIN_DIR / "cleanup_report.json"
+
+    object_count = -1
+    if hull_path.exists():
+        try:
+            hull_payload = json.loads(hull_path.read_text(encoding="utf-8"))
+            object_count = int(hull_payload.get("object_count", 0))
+        except Exception:
+            object_count = -1
+
+    removed_points = -1
+    proxy_hull_used = ""
+    if cleanup_report_path.exists():
+        try:
+            cleanup_payload = json.loads(cleanup_report_path.read_text(encoding="utf-8"))
+            removed_points = int(cleanup_payload.get("removed_points", -1))
+            proxy_hull_used = str(cleanup_payload.get("proxy_hull_path", ""))
+        except Exception:
+            removed_points = -1
 
     checks = {
-        "rendered_images_nonzero": rendered_images > 0,
-        "text_colmap_exists": all(path.exists() for path in (cameras_txt, images_txt, points_txt)),
-        "binary_colmap_exists": all(path.exists() for path in (cameras_bin, images_bin, points_bin)),
-        "validation_report_exists": validation_report.exists(),
+        "capture_finished": not bpy.context.scene.gs_capture_settings.is_rendering,
+        "proxy_hulls_exists": hull_path.exists(),
+        "proxy_hulls_has_objects": object_count > 0,
+        "cleanup_operator_finished": "FINISHED" in set(cleanup_result),
+        "cleaned_ply_exists": cleaned_path.exists(),
+        "cleanup_report_exists": cleanup_report_path.exists(),
+        "removed_points_positive": removed_points > 0,
+        "kept_points_expected": read_vertex_count(cleaned_path) == 3,
+        "proxy_hull_path_used": proxy_hull_used.replace("\\", "/").endswith("cleanup/proxy_hulls.json"),
     }
-
-    if checks["binary_colmap_exists"]:
-        checks["cameras_bin_count_valid"] = read_u64_header(cameras_bin) == 1
-        checks["images_bin_count_valid"] = read_u64_header(images_bin) == rendered_images
-        checks["points_bin_count_valid"] = read_u64_header(points_bin) >= 100
-    else:
-        checks["cameras_bin_count_valid"] = False
-        checks["images_bin_count_valid"] = False
-        checks["points_bin_count_valid"] = False
 
     STATE["report"]["checks"] = checks
     STATE["report"]["success"] = all(checks.values()) and not STATE["report"]["errors"]
-    log(f"Binary COLMAP smoke complete: success={STATE['report']['success']}")
+    log(f"Cleanup smoke complete: success={STATE['report']['success']}")
 
 
 def write_and_quit() -> None:
@@ -190,38 +235,35 @@ def write_and_quit() -> None:
 def tick():
     try:
         if time.time() - STATE["start_time"] > 600:
-            raise TimeoutError("COLMAP binary smoke timed out")
+            raise TimeoutError("Cleanup smoke timed out")
 
         if STATE["phase"] == "init":
             OUT_ROOT.mkdir(parents=True, exist_ok=True)
             if REPORT_PATH.exists():
                 REPORT_PATH.unlink()
-            shutil.rmtree(CASE_DIR, ignore_errors=True)
+            shutil.rmtree(CAPTURE_DIR, ignore_errors=True)
+            shutil.rmtree(TRAIN_DIR, ignore_errors=True)
             ensure_addon_registered()
             setup_scene()
-            configure_settings()
+            configure_capture_settings()
             start_capture()
             STATE["phase"] = "wait_capture"
             return 0.2
 
         if STATE["phase"] == "wait_capture":
             started_at = STATE["capture_started_at"] or STATE["start_time"]
-            if time.time() - started_at > 240:
+            if time.time() - started_at > 300:
                 raise TimeoutError("Capture did not complete in time")
 
-            settings = bpy.context.scene.gs_capture_settings
-            if settings.is_rendering:
+            if bpy.context.scene.gs_capture_settings.is_rendering:
                 return 0.2
 
-            evaluate_results()
+            run_cleanup_and_evaluate()
             STATE["phase"] = "done"
             write_and_quit()
             return None
 
-        if STATE["phase"] == "done":
-            return None
-
-        raise RuntimeError(f"Unknown phase: {STATE['phase']}")
+        return None
 
     except Exception as exc:
         STATE["report"]["errors"].append(

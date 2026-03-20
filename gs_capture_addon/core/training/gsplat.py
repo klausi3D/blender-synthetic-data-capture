@@ -5,11 +5,10 @@ https://github.com/nerfstudio-project/gsplat
 
 import os
 import re
-import shutil
-from typing import Optional, List, Dict
+from typing import Optional, List
 
 from .base import TrainingBackend, TrainingConfig, TrainingProgress, TrainingStatus
-from ...utils.paths import normalize_path, get_conda_base, get_conda_python
+from ...utils.paths import normalize_path, get_conda_python
 
 
 class GsplatBackend(TrainingBackend):

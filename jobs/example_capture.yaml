@@ -1,0 +1,89 @@
+# GS Blender — Example Capture + Training Job
+# =============================================
+# Full pipeline config: .blend → multi-view captures → GS training → cleanup
+#
+# Usage:
+#   # Config-driven headless capture only:
+#   blender scene.blend --python tools/headless_capture.py -- --config jobs/example_capture.yaml
+#
+#   # Full pipeline (capture + training + cleanup):
+#   python tools/pipeline.py --config jobs/example_capture.yaml
+#
+#   # Dry run:
+#   python tools/pipeline.py --config jobs/example_capture.yaml --dry-run
+
+# Path to Blender executable (used by pipeline.py, not by headless_capture.py)
+blender_path: "blender"   # Or full path: "C:/Program Files/Blender Foundation/Blender 4.5/blender.exe"
+
+# Input scene
+scene: "C:/scenes/sponza.blend"
+
+# Root output directory — each item gets a sub-folder
+output_base: "Z:/GS_CAPTURE/sponza"
+
+# ─── Capture Settings ─────────────────────────────────────────────────────
+capture:
+  cameras: 150
+  distribution: FIBONACCI   # FIBONACCI | HEMISPHERE_TOP | HEMISPHERE_BOTTOM | RING | MULTI_RING
+
+  # Framework preset — sets sensible defaults for a target training backend.
+  # Individual settings below override the preset.
+  # Options: 3dgs, nerfstudio, gsplat, instant_ngp, postshot, polycam, luma_ai
+  preset: "3dgs"
+
+  engine: EEVEE              # EEVEE | CYCLES
+  speed_preset: BALANCED     # FAST | BALANCED | QUALITY | CUSTOM
+  resolution: [1920, 1080]
+
+  # Optional camera overrides
+  # min_elevation: -60
+  # max_elevation: 60
+  # focal_length: 50
+  # distance_multiplier: 2.5
+
+  transparent_background: true
+  # lighting_mode: WHITE     # WHITE | GRAY | HDR | KEEP
+  # material_mode: ORIGINAL  # ORIGINAL | DIFFUSE | VERTEX_COLOR | MATCAP
+
+  checkpoints: true
+  auto_resume: true
+
+  exports:
+    colmap: true
+    colmap_binary: true
+    transforms_json: true
+    depth: true
+    normals: false
+    masks: true
+    mask_source: ALPHA       # ALPHA | OBJECT_INDEX
+
+# ─── Items to Capture ─────────────────────────────────────────────────────
+# If omitted, captures all collections (batch_mode: COLLECTIONS).
+# Per-item "cameras" overrides the global capture.cameras.
+items:
+  - type: collection
+    name: "Furniture"
+    cameras: 200             # more cameras for complex geometry
+
+  - type: collection
+    name: "Architecture"
+
+# ─── Training Settings ────────────────────────────────────────────────────
+training:
+  enabled: true
+  backend: "original"        # original | nerfstudio | gsplat
+  iterations: 30000
+  save_iterations: [7000, 15000, 30000]
+  white_background: true
+  gpu_id: 0
+  # gaussian_splatting_path: "~/gaussian-splatting"  # auto-detected if empty
+
+# ─── Post-Training Cleanup ────────────────────────────────────────────────
+cleanup:
+  enabled: true
+  proxy_hulls: true
+  hull_margin: 0.01
+  max_removal_ratio: 0.70
+
+# ─── Pipeline Control ─────────────────────────────────────────────────────
+timeout_per_capture: 3600    # seconds

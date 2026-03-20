@@ -5,9 +5,8 @@ Analyzes materials in selected objects and warns about properties
 that cause issues with 3DGS/NeRF training (transparency, reflections, etc).
 """
 
-import bpy
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import List, Tuple
 from enum import Enum
 
 

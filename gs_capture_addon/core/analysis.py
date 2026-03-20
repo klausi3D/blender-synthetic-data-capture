@@ -3,7 +3,6 @@ Mesh and texture analysis for adaptive capture settings.
 Analyzes scene complexity to recommend optimal capture parameters.
 """
 
-import bpy
 import math
 from collections import defaultdict
 from mathutils import Vector

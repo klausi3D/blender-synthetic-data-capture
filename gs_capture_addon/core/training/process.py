@@ -11,7 +11,7 @@ import sys
 import re
 import signal
 from typing import Optional, Callable
-from queue import Queue, Empty
+from queue import Queue
 
 # Pattern to remove ANSI escape codes
 ANSI_ESCAPE = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')

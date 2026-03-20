@@ -2,7 +2,6 @@
 Adaptive analysis panel.
 """
 
-import bpy
 from bpy.types import Panel
 
 

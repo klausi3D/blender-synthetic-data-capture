@@ -129,8 +129,8 @@ class GSCAPTURE_OT_analyze_scene_mvp(bpy.types.Operator):
         return any(obj.type == 'MESH' for obj in context.selected_objects)
 
     def execute(self, context):
-        from ..core.material_analyzer import analyze_objects, get_problem_summary, ProblemSeverity
-        from ..core.scene_score import analyze_scene, SceneGrade
+        from ..core.material_analyzer import analyze_objects, get_problem_summary
+        from ..core.scene_score import analyze_scene
 
         settings = context.scene.gs_capture_settings
         mesh_objects = [obj for obj in context.selected_objects if obj.type == 'MESH']

@@ -7,16 +7,38 @@ repo_name: klausi3D/blender-synthetic-data-capture
 theme:
   name: material
   language: en
+  palette:
+    - scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
   features:
     - navigation.sections
+    - navigation.tabs
+    - navigation.indexes
     - navigation.top
     - content.code.copy
+    - content.tabs.link
 
 markdown_extensions:
   - admonition
   - tables
   - toc:
       permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
 
 nav:
   - Home: index.md
@@ -24,6 +46,7 @@ nav:
   - Quick Start: quickstart.md
   - Capture And Exports: capture-and-exports.md
   - Training Backends: training-backends.md
+  - Splat Cleanup: splat-cleanup.md
   - Training Setup (CLI): guides/training-setup.md
   - Pipeline Setup (CLI): guides/pipeline-setup.md
   - Troubleshooting: troubleshooting.md

@@ -16,6 +16,7 @@
 - Depth maps: `depth/depth_0000.<ext>`
 - Normal maps: `normals/normal_0000.exr`
 - Masks: `masks/mask_0000.<ext>` or GS-Lightning naming
+- Proxy hulls: `cleanup/proxy_hulls.json` (for post-training splat cleanup)
 - Validation report: `validation_report.json` (pre-capture + post-export checks)
 
 ## Validation UX

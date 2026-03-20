@@ -12,7 +12,6 @@ Usage:
     python tools/create_masks_from_background.py /path/to/capture --threshold 30
 """
 
-import os
 import sys
 import argparse
 from pathlib import Path

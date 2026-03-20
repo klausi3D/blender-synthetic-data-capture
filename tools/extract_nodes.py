@@ -163,7 +163,7 @@ def main() -> None:
                 
                 # Look for OSL or custom scripts
                 if 'Script' in node.bl_idname:
-                    print(f"    [CUSTOM SHADER DETECTED]")
+                    print("    [CUSTOM SHADER DETECTED]")
                     if hasattr(node, 'script') and node.script:
                         print(f"    Script: {node.script.name}")
 

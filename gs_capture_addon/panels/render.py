@@ -3,7 +3,6 @@ Render settings panel.
 Uses Blender's native render settings directly for proper sync.
 """
 
-import bpy
 from bpy.types import Panel
 
 

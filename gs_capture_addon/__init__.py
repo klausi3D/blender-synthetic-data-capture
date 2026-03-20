@@ -96,6 +96,7 @@ classes = [
     training_operators.GSCAPTURE_OT_ClearTraining,
     training_operators.GSCAPTURE_OT_BrowseTrainingData,
     training_operators.GSCAPTURE_OT_BrowseTrainingOutput,
+    training_operators.GSCAPTURE_OT_RunSplatCleanup,
     training_operators.GSCAPTURE_OT_OpenTrainingOutput,
     training_operators.GSCAPTURE_OT_ShowInstallInstructions,
     training_operators.GSCAPTURE_OT_UseLastCapture,

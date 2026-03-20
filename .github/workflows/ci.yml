@@ -28,6 +28,11 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Lint with ruff
+        run: |
+          pip install ruff
+          ruff check gs_capture_addon/ tools/ tests/
+
       - name: Compile addon Python
         run: |
           python - <<'PY'
@@ -40,6 +45,24 @@ jobs:
                           compile(fh.read(), p, "exec")
           print("OK: addon python compile")
           PY
+
+      - name: Run cleanup core tests
+        run: python tests/python/test_splat_cleanup_core.py
+
+      - name: Run library capture tests
+        run: python tests/python/test_library_capture.py
+
+      - name: Run paths tests
+        run: python tests/python/test_paths.py
+
+      - name: Run checkpoint tests
+        run: python tests/python/test_checkpoint.py
+
+      - name: Run camera math tests
+        run: python tests/python/test_camera_math.py
+
+      - name: Run validation core tests
+        run: python tests/python/test_validation_core.py
 
       - name: Validate tracked blend files
         run: |
@@ -212,7 +235,9 @@ jobs:
               ("COLMAP binary smoke", "tests/smoke/smoke_colmap_binary_export.py", 600),
               ("asset-library capture smoke", "tests/smoke/smoke_asset_library_capture.py", 900),
               ("object-transform export smoke", "tests/smoke/smoke_object_transform_export.py", 600),
+              ("proxy-hull cleanup smoke", "tests/smoke/smoke_splat_cleanup_proxy_hull.py", 600),
               ("import-trained-splat smoke", "tests/smoke/smoke_import_trained_splat.py", 600),
+              ("headless capture smoke", "tests/smoke/smoke_headless_capture.py", 600),
           ]
 
           for name, rel_script, timeout_seconds in scripts:
