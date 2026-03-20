@@ -66,7 +66,7 @@ def extract_node_tree(node_tree, depth=0):
                         socket_info['default'] = list(val)[:4]  # Truncate vectors
                     else:
                         socket_info['default'] = val
-                except:
+                except Exception:
                     pass
             node_info['inputs'].append(socket_info)
         

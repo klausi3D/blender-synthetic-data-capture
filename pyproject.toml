@@ -3,16 +3,25 @@ target-version = "py311"
 line-length = 120
 
 [tool.ruff.lint]
-# Pyflakes only — catches real errors (unused imports, undefined names)
-select = ["F"]
-# Allow unused local variables (common in Blender callbacks/operators)
-ignore = ["F841"]
+# Pyflakes + pycodestyle errors/warnings
+select = ["F", "E", "W"]
+ignore = [
+    "F841",   # Allow unused local variables (Blender callbacks)
+    "E501",   # Line too long — handled by line-length setting awareness, not enforced
+    "E731",   # Allow lambda assignments (common in Blender UI code)
+    "W291",   # Trailing whitespace — too noisy for existing codebase
+    "W292",   # No newline at end of file — too noisy
+    "W293",   # Whitespace before ':' — too noisy
+]
 
 [tool.ruff.lint.per-file-ignores]
 # __init__.py files re-export symbols intentionally
-"__init__.py" = ["F401"]
+"__init__.py" = ["F401", "E402"]
 # Operator files use conditional/lazy imports inside functions
 "gs_capture_addon/operators/*.py" = ["F401", "F811"]
 # try/except import-availability checks (import for side effect detection)
 "tools/extract_masks.py" = ["F401"]
 "tools/gs_training_pipeline.py" = ["F401"]
+# sys.path manipulation before imports is intentional
+"tools/library_capture.py" = ["E402"]
+"gs_capture_addon/core/training/process.py" = ["E402"]

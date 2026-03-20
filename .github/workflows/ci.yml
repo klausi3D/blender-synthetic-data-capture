@@ -30,7 +30,7 @@ jobs:
 
       - name: Lint with ruff
         run: |
-          pip install ruff
+          pip install ruff==0.12.5
           ruff check gs_capture_addon/ tools/ tests/
 
       - name: Compile addon Python
@@ -66,6 +66,9 @@ jobs:
 
       - name: Run validation core tests
         run: python tests/python/test_validation_core.py
+
+      - name: Run capture config schema tests
+        run: python tests/python/test_capture_config_schema.py
 
       - name: Validate tracked blend files
         run: |
@@ -107,6 +110,11 @@ jobs:
 
           print(f"OK: validated {len(blend_files)} tracked .blend file(s)")
           PY
+
+      - name: Build docs (mkdocs strict)
+        run: |
+          pip install mkdocs==1.6.1 mkdocs-material==9.6.14
+          mkdocs build --strict
 
       - name: Package addon
         run: |
