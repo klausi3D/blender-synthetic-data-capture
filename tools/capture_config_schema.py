@@ -13,6 +13,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+__all__ = [
+    "CaptureExportsConfig", "CaptureConfig", "CaptureItemConfig",
+    "TrainingConfig", "CleanupConfig", "JobConfig",
+    "load_job_config", "job_config_to_dict", "_dict_to_dataclass",
+]
+
 
 # ---------------------------------------------------------------------------
 # Schema dataclasses

@@ -95,7 +95,7 @@ def load_config(path: str) -> dict:
 # Phase 1: Capture
 # ---------------------------------------------------------------------------
 def run_capture(blender_exe: str, config: dict, config_path: str,
-                dry_run: bool = False) -> bool:
+                dry_run: bool = False, env: dict = None) -> bool:
     """Launch Blender with headless_capture.py for a single job config."""
     scene_path = config.get("scene", "")
     output_base = config.get("output_base", "")
@@ -145,6 +145,7 @@ def run_capture(blender_exe: str, config: dict, config_path: str,
             cmd,
             timeout=timeout + 60,  # grace period on top of internal timeout
             capture_output=False,   # let output stream to console
+            env=env,
         )
         elapsed = time.monotonic() - start
 

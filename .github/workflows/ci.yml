@@ -44,6 +44,9 @@ jobs:
       - name: Run cleanup core tests
         run: python tests/python/test_splat_cleanup_core.py
 
+      - name: Run library capture tests
+        run: python tests/python/test_library_capture.py
+
       - name: Validate tracked blend files
         run: |
           python - <<'PY'

@@ -1,0 +1,92 @@
+# GS Blender — Asset Library Batch Processing
+# =============================================
+# Scans a folder of .blend files, introspects each to discover collections,
+# and runs the full capture → training → cleanup pipeline for every item.
+#
+# Usage:
+#   python tools/library_capture.py --config jobs/example_library.yaml
+#   python tools/library_capture.py --config jobs/example_library.yaml --dry-run
+#   python tools/library_capture.py --config jobs/example_library.yaml --introspect-only
+
+blender_path: "blender"
+
+# ─── Source ────────────────────────────────────────────────────────────────
+# Specify a folder to scan for .blend files:
+library_path: "Z:/BlenderAssets/props"
+
+# Or specify files explicitly (overrides library_path):
+# blend_files:
+#   - "C:/models/chair.blend"
+#   - "C:/models/table.blend"
+
+# ─── Output ────────────────────────────────────────────────────────────────
+# Root output directory — each .blend gets a subfolder by filename stem
+output_base: "Z:/GS_TRAINING/props"
+
+# ─── Behavior ──────────────────────────────────────────────────────────────
+# How to capture each .blend file:
+#   COLLECTIONS  — each collection becomes its own capture (default)
+#   SCENE        — entire scene as one capture per file
+#   EACH_OBJECT  — each mesh object individually
+granularity: COLLECTIONS
+
+# Skip files/collections that already have successful captures
+skip_existing: true
+
+# Scan subdirectories recursively
+recursive: true
+
+# Adaptive analysis: auto-detect optimal cameras/resolution per collection
+# based on mesh complexity. Slower (requires full Blender scene load).
+adaptive: false
+adaptive_quality_preset: AUTO   # AUTO | DRAFT | STANDARD | HIGH | ULTRA
+
+# ─── Filtering ─────────────────────────────────────────────────────────────
+filters:
+  include_files: ["*.blend"]
+  exclude_files: ["*_backup*", "*_old*", "*_archive*"]
+  include_collections: []          # empty = all collections
+  exclude_collections: ["Camera*", "Light*", "Empties*", "Helpers*"]
+  min_mesh_count: 1                # skip collections with no mesh objects
+
+# ─── Capture Settings ──────────────────────────────────────────────────────
+# Default settings applied to all files (adaptive overrides when enabled)
+capture:
+  cameras: 150
+  distribution: FIBONACCI
+  preset: "3dgs"
+  engine: EEVEE
+  speed_preset: BALANCED
+  resolution: [1920, 1080]
+  transparent_background: true
+  checkpoints: true
+  auto_resume: true
+  exports:
+    colmap: true
+    colmap_binary: false
+    transforms_json: true
+    depth: false
+    normals: false
+    masks: false
+    mask_source: ALPHA
+
+# ─── Training Settings ────────────────────────────────────────────────────
+training:
+  enabled: true
+  backend: "original"
+  iterations: 30000
+  save_iterations: [7000, 15000, 30000]
+  white_background: true
+  gpu_id: 0
+
+# ─── Post-Training Cleanup ────────────────────────────────────────────────
+cleanup:
+  enabled: true
+  proxy_hulls: true
+  hull_margin: 0.01
+  max_removal_ratio: 0.70
+
+# ─── Execution ─────────────────────────────────────────────────────────────
+max_workers: 1            # parallel Blender instances (1 = sequential)
+gpu_ids: [0]              # round-robin GPU assignment for parallel workers
+timeout_per_file: 7200    # seconds per .blend file
