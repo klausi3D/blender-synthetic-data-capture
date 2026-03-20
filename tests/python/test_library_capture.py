@@ -294,17 +294,21 @@ def test_parse_asset_catalog(F: _Failures) -> None:
 def test_library_config_schema(F: _Failures) -> None:
     """Test loading a library config from YAML."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        config_path = Path(tmpdir) / "test_config.yaml"
+        config_path = Path(tmpdir) / "test_config.json"
         config_path.write_text(
-            "library_path: /assets\n"
-            "output_base: /output\n"
-            "granularity: SCENE\n"
-            "skip_existing: false\n"
-            "filters:\n"
-            "  exclude_files: ['*_old*']\n"
-            "  min_mesh_count: 2\n"
-            "capture:\n"
-            "  cameras: 200\n",
+            json.dumps({
+                "library_path": "/assets",
+                "output_base": "/output",
+                "granularity": "SCENE",
+                "skip_existing": False,
+                "filters": {
+                    "exclude_files": ["*_old*"],
+                    "min_mesh_count": 2,
+                },
+                "capture": {
+                    "cameras": 200,
+                },
+            }),
             encoding="utf-8",
         )
 
