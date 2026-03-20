@@ -2,7 +2,6 @@
 Camera settings panel.
 """
 
-import bpy
 from bpy.types import Panel
 
 

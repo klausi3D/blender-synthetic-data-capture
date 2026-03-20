@@ -180,7 +180,7 @@ def check_mask_naming(data_path: str, backend_id: str) -> Tuple[bool, str]:
             matching += 1
 
     if matching == 0:
-        return False, f"No masks match expected naming. Expected: {{image_name}}.png (e.g., image_0001.png.png)"
+        return False, "No masks match expected naming. Expected: {image_name}.png (e.g., image_0001.png.png)"
 
     if matching < len(image_files):
         return True, f"Partial mask coverage: {matching}/{len(image_files)} images have masks"

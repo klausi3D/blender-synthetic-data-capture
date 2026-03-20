@@ -13,7 +13,6 @@ Usage:
 
 import os
 import sys
-import json
 import argparse
 import subprocess
 import shutil
@@ -406,7 +405,7 @@ Environment Variables:
     print(f"Failed: {len(results['failed'])}")
     
     if results["failed"]:
-        print(f"\nFailed:")
+        print("\nFailed:")
         for name in results["failed"]:
             print(f"  - {name}")
     

@@ -92,19 +92,19 @@ def analyze_geometry_nodes():
 
         print(f"\n### Node Tree: {nt.name}")
         print(f"Total nodes: {len(nt.nodes)}")
-        print(f"\nRendering technique indicators:")
+        print("\nRendering technique indicators:")
         print(f"  - Instance on Points: {has_instance_on_points}")
         print(f"  - Mesh to Points: {has_mesh_to_points}")
         print(f"  - Ico Sphere (for billboards): {has_ico_sphere}")
         print(f"  - Simulation nodes: {has_simulation}")
 
         if attribute_reads:
-            print(f"\nGaussian attributes READ:")
+            print("\nGaussian attributes READ:")
             for attr in sorted(set(attribute_reads)):
                 print(f"  - {attr}")
 
         if attribute_stores:
-            print(f"\nAttributes STORED (computed):")
+            print("\nAttributes STORED (computed):")
             for attr in sorted(set(attribute_stores)):
                 print(f"  - {attr}")
 

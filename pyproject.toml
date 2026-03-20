@@ -1,0 +1,18 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+# Pyflakes only — catches real errors (unused imports, undefined names)
+select = ["F"]
+# Allow unused local variables (common in Blender callbacks/operators)
+ignore = ["F841"]
+
+[tool.ruff.lint.per-file-ignores]
+# __init__.py files re-export symbols intentionally
+"__init__.py" = ["F401"]
+# Operator files use conditional/lazy imports inside functions
+"gs_capture_addon/operators/*.py" = ["F401", "F811"]
+# try/except import-availability checks (import for side effect detection)
+"tools/extract_masks.py" = ["F401"]
+"tools/gs_training_pipeline.py" = ["F401"]

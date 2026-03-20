@@ -5,7 +5,7 @@ Defines interface for all training framework integrations.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Optional, Callable, List, Dict, Any
+from typing import Optional, List, Dict
 from enum import Enum
 
 

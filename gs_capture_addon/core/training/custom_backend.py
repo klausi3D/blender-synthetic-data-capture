@@ -3,10 +3,10 @@
 import os
 import re
 import json
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict
 
 from .base import TrainingBackend, TrainingConfig, TrainingProgress, TrainingStatus
-from ...utils.paths import normalize_path, get_conda_base, get_conda_python, get_conda_script
+from ...utils.paths import normalize_path, get_conda_python
 
 # Try to import yaml, fall back gracefully
 try:

@@ -5,13 +5,12 @@ https://github.com/yzslab/gaussian-splatting-lightning
 
 import os
 import re
-import shutil
 import sys
 import warnings
 from typing import Optional, List, Dict
 
 from .base import TrainingBackend, TrainingConfig, TrainingProgress, TrainingStatus
-from ...utils.paths import normalize_path, get_conda_base, get_conda_python
+from ...utils.paths import normalize_path, get_conda_python
 
 
 class GSLightningBackend(TrainingBackend):

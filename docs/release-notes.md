@@ -27,5 +27,5 @@
 ## CI Coverage
 
 - Python sanity checks and packaging
-- Windows smoke tests in Blender 4.5.1 and 5.0
+- Linux smoke tests in Blender 4.5.1 and 5.0
 - Checkpoint-only and object-index mask focused smoke tests

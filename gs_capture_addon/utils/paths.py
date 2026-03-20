@@ -2,7 +2,6 @@
 
 import os
 import sys
-import platform
 
 WINDOWS_MAX_PATH = 260
 

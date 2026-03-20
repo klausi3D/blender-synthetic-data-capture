@@ -11,7 +11,6 @@ Usage:
     python tools/extract_masks.py /path/to/capture --create-white-bg
 """
 
-import os
 import sys
 import argparse
 from pathlib import Path

@@ -11,11 +11,10 @@ Usage:
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import List
 
 from tools.capture_config_schema import (
     CaptureConfig,
-    CaptureExportsConfig,
     TrainingConfig,
     CleanupConfig,
     _dict_to_dataclass,

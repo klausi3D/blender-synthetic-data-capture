@@ -386,10 +386,10 @@ class GSCAPTURE_OT_StartTraining(Operator):
             elif any('transforms.json' in m for m in missing_required):
                 errors.append(get_error_message('missing_transforms', data_path=normalized_data))
             else:
-                errors.append(f"Missing required items:\n" + "\n".join(f"  - {m}" for m in missing_required))
+                errors.append("Missing required items:\n" + "\n".join(f"  - {m}" for m in missing_required))
 
         if missing_optional:
-            warnings.append(f"Missing optional items:\n" + "\n".join(f"  - {m}" for m in missing_optional))
+            warnings.append("Missing optional items:\n" + "\n".join(f"  - {m}" for m in missing_optional))
 
         # Check image count
         image_count = count_images(normalized_data)

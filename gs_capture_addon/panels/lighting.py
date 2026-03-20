@@ -2,7 +2,6 @@
 Lighting and materials panel.
 """
 
-import bpy
 from bpy.types import Panel
 
 

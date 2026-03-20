@@ -20,10 +20,9 @@ import platform
 import shutil
 import subprocess
 import sys
-import tempfile
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -33,7 +32,7 @@ REPO_ROOT = SCRIPT_DIR.parent
 
 # Import pipeline for delegation
 sys.path.insert(0, str(SCRIPT_DIR))
-from pipeline import find_blender, run_pipeline, log as pipeline_log
+from pipeline import find_blender, run_pipeline
 
 
 # ---------------------------------------------------------------------------

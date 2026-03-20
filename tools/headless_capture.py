@@ -26,7 +26,6 @@ following the proven pattern from tests/smoke/smoke_release_verification.py.
 
 import argparse
 import json
-import os
 import sys
 import tempfile
 import time
