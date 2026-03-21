@@ -188,7 +188,10 @@ def validate_outputs() -> dict:
 
     # Depth maps
     depth_dir = CASE_DIR / "depth"
-    depth_files = sorted(depth_dir.glob("*.png")) if depth_dir.exists() else []
+    if depth_dir.exists():
+        depth_files = sorted(depth_dir.glob("*.png")) + sorted(depth_dir.glob("*.exr"))
+    else:
+        depth_files = []
     checks["depth_dir_exists"] = depth_dir.exists()
     checks["depth_count"] = len(depth_files)
     checks["depth_matches_images"] = len(depth_files) == len(image_files)
