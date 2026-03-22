@@ -2,7 +2,18 @@
 
 ## Current Addon Version
 
-`2.2.2`
+`2.3.0`
+
+## 2.3.0 (2026-03-22)
+
+1. Added end-to-end pipeline orchestrator (`tools/pipeline.py`) for config-driven capture, training, and cleanup.
+2. Added headless capture script (`tools/headless_capture.py`) for GUI-free multi-view rendering.
+3. Added asset library batch capture (`tools/library_capture.py`) with introspection, adaptive analysis, and parallel execution.
+4. Added proxy-hull splat cleanup with automatic post-training PLY filtering.
+5. Added config schema validation for capture and library job configs.
+6. Added 700+ unit tests across 8 test suites (cleanup, camera math, checkpoints, paths, validation, config schema, library capture, realistic PLY).
+7. Hardened config loading with error handling for missing files and parse failures.
+8. Added documentation for headless capture, library batch capture, and automation pipeline.
 
 ## 2.2.2 (2026-02-21)
 
@@ -26,6 +37,9 @@
 
 ## CI Coverage
 
-- Python sanity checks and packaging
-- Linux smoke tests in Blender 4.5.1 and 5.0
-- Checkpoint-only and object-index mask focused smoke tests
+- Ruff linting (Pyflakes + pycodestyle errors and warnings, pinned to 0.12.5)
+- 8 unit test suites (700+ assertions)
+- Python compile checks and addon packaging
+- mkdocs build with `--strict` mode
+- Linux smoke tests in Blender 4.5.1 and 5.0.0 (10 smoke scripts)
+- Tracked .blend file validation
