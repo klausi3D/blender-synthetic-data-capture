@@ -94,12 +94,28 @@ class JobResult:
 # ---------------------------------------------------------------------------
 def load_config(path: str) -> dict:
     """Load a YAML or JSON config file as a raw dict."""
-    text = Path(path).read_text(encoding="utf-8")
+    config_path = Path(path)
+    if not config_path.exists():
+        print(f"ERROR: Config file not found: {path}", file=sys.stderr)
+        raise SystemExit(1)
+    try:
+        text = config_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"ERROR: Cannot read config file '{path}': {exc}", file=sys.stderr)
+        raise SystemExit(1)
     try:
         import yaml
         return yaml.safe_load(text) or {}
     except ImportError:
+        pass
+    except Exception as exc:
+        print(f"ERROR: Failed to parse YAML config '{path}': {exc}", file=sys.stderr)
+        raise SystemExit(1)
+    try:
         return json.loads(text)
+    except json.JSONDecodeError as exc:
+        print(f"ERROR: Failed to parse config '{path}': {exc}", file=sys.stderr)
+        raise SystemExit(1)
 
 
 def config_get(config: dict, *keys, default=None):

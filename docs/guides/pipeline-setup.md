@@ -1,5 +1,10 @@
 # Gaussian Splatting Training Pipeline - Setup Guide
 
+!!! note "New Automation Tools"
+    For the end-to-end pipeline orchestrator, see
+    [Automation Pipeline](automation-pipeline.md). For batch processing
+    of asset libraries, see [Library Batch Capture](library-batch-capture.md).
+
 This repository includes two CLI scripts for training outside Blender:
 
 1. `tools/train_gs_simple.py` - simple training for one folder or batch folders
