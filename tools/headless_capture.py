@@ -197,15 +197,26 @@ def resolve_preset(name: str) -> str:
 # ---------------------------------------------------------------------------
 def load_yaml_config(config_path: str) -> dict:
     """Load a YAML job config, return the capture section as a flat dict."""
+    if not Path(config_path).exists():
+        log(f"ERROR: Config file not found: {config_path}")
+        return {}
     try:
         import yaml
     except ImportError:
         log("WARNING: PyYAML not available — trying json fallback")
-        with open(config_path, "r", encoding="utf-8") as f:
-            return json.load(f)
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, json.JSONDecodeError) as exc:
+            log(f"ERROR: Failed to parse config '{config_path}': {exc}")
+            return {}
 
-    with open(config_path, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f)
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f)
+    except (OSError, Exception) as exc:
+        log(f"ERROR: Failed to parse config '{config_path}': {exc}")
+        return {}
 
     return data or {}
 

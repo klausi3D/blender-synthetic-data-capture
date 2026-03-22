@@ -9,6 +9,8 @@ Usage:
     job = load_job_config("jobs/my_job.yaml")
 """
 
+import json
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, List, Optional
@@ -154,15 +156,29 @@ def _dict_to_dataclass(cls, data: dict) -> Any:
 def load_job_config(path: str) -> JobConfig:
     """Load a YAML (or JSON) job config file into a JobConfig dataclass."""
     config_path = Path(path)
-    text = config_path.read_text(encoding="utf-8")
-
+    if not config_path.exists():
+        print(f"ERROR: Config file not found: {path}", file=sys.stderr)
+        raise SystemExit(1)
+    try:
+        text = config_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        print(f"ERROR: Cannot read config file '{path}': {exc}", file=sys.stderr)
+        raise SystemExit(1)
     try:
         import yaml
         data = yaml.safe_load(text) or {}
     except ImportError:
-        import json
+        pass
+    except Exception as exc:
+        print(f"ERROR: Failed to parse YAML config '{path}': {exc}", file=sys.stderr)
+        raise SystemExit(1)
+    else:
+        return _dict_to_dataclass(JobConfig, data)
+    try:
         data = json.loads(text)
-
+    except json.JSONDecodeError as exc:
+        print(f"ERROR: Failed to parse config '{path}': {exc}", file=sys.stderr)
+        raise SystemExit(1)
     return _dict_to_dataclass(JobConfig, data)
 
 
