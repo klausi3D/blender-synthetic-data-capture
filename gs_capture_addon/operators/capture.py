@@ -63,19 +63,22 @@ from ..utils.checkpoint import (
 )
 from ..utils.paths import validate_path_length
 
+VALIDATION_DIALOG_MAX_ITEMS = 12
+MODAL_TIMER_INTERVAL_SECONDS = 0.1
+RENDER_IDLE_TICKS_REQUIRED = 5
+
 
 class _AsyncCheckpointWriter:
     """Background checkpoint writer to avoid blocking the render loop."""
 
     def __init__(self, output_path):
         self._output_path = output_path
-        self._lock = threading.Lock()
+        self._condition = threading.Condition()
         self._pending = None
         self._pending_version = 0
         self._written_version = 0
         self._errors = []
         self._last_error = None
-        self._event = threading.Event()
         self._stop_requested = False
         self._thread = threading.Thread(
             target=self._run,
@@ -86,58 +89,66 @@ class _AsyncCheckpointWriter:
 
     def request_save(self, checkpoint_data):
         snapshot = copy.deepcopy(checkpoint_data)
-        with self._lock:
+        with self._condition:
             self._pending = snapshot
             self._pending_version += 1
-            self._event.set()
+            self._condition.notify_all()
             return self._pending_version
 
     def flush(self, timeout=None):
-        start = time.time()
-        while True:
-            with self._lock:
+        deadline = None if timeout is None else (time.time() + timeout)
+        with self._condition:
+            while True:
                 pending_version = self._pending_version
                 written_version = self._written_version
                 pending_exists = self._pending is not None
-            if pending_version == 0 or (written_version >= pending_version and not pending_exists):
-                return True
-            if timeout is not None and (time.time() - start) >= timeout:
-                return False
-            time.sleep(0.01)
+                if pending_version == 0 or (written_version >= pending_version and not pending_exists):
+                    return True
+
+                if deadline is None:
+                    self._condition.wait(timeout=0.05)
+                    continue
+
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    return False
+                self._condition.wait(timeout=min(0.05, remaining))
 
     def stop(self, timeout=None):
         self.flush(timeout=timeout)
-        with self._lock:
+        with self._condition:
             self._stop_requested = True
-            self._event.set()
+            self._condition.notify_all()
         if self._thread.is_alive():
             self._thread.join(timeout=timeout)
 
     def _run(self):
         while True:
-            self._event.wait()
-            with self._lock:
+            with self._condition:
+                while self._pending is None and not self._stop_requested:
+                    self._condition.wait()
                 if self._stop_requested and self._pending is None:
                     break
                 snapshot = self._pending
                 version = self._pending_version
                 self._pending = None
-                self._event.clear()
+
             if snapshot is None:
                 continue
+
             success, error = save_checkpoint(self._output_path, snapshot)
-            with self._lock:
+            with self._condition:
                 if success:
                     self._last_error = None
                 elif error and error != self._last_error:
                     self._errors.append(error)
                     self._last_error = error
-            with self._lock:
                 if version > self._written_version:
                     self._written_version = version
+                self._condition.notify_all()
 
     def pop_errors(self):
-        with self._lock:
+        with self._condition:
             errors = list(self._errors)
             self._errors.clear()
         return errors
@@ -280,7 +291,7 @@ class GSCAPTURE_OT_capture_selected(Operator):
 
         box = layout.box()
         col = box.column(align=True)
-        max_items = 12
+        max_items = VALIDATION_DIALOG_MAX_ITEMS
         for issue in validation_result.issues[:max_items]:
             col.label(
                 text=f"[{issue.category}] {issue.message}",
@@ -298,9 +309,8 @@ class GSCAPTURE_OT_capture_selected(Operator):
 
     def _count_non_empty_files(self, directory, pattern):
         """Count files that match pattern and have non-zero size."""
-        matches = glob.glob(os.path.join(directory, pattern))
         count = 0
-        for path in matches:
+        for path in glob.iglob(os.path.join(directory, pattern)):
             try:
                 if os.path.getsize(path) > 0:
                     count += 1
@@ -308,15 +318,10 @@ class GSCAPTURE_OT_capture_selected(Operator):
                 continue
         return count
 
-    def _build_post_export_validation(self, settings, image_ext):
-        """Validate exported artifacts and return issues plus check details."""
-        expected = len(self._cameras)
-        result = ValidationResult()
-        checks = []
-
-        def add_check(label, folder, pattern, required):
-            found = self._count_non_empty_files(folder, pattern)
-            check = {
+    def _add_artifact_check(self, result, checks, label, folder, pattern, expected, required):
+        found = self._count_non_empty_files(folder, pattern)
+        checks.append(
+            {
                 "name": label,
                 "folder": folder,
                 "pattern": pattern,
@@ -324,24 +329,24 @@ class GSCAPTURE_OT_capture_selected(Operator):
                 "found": found,
                 "required": required,
             }
-            checks.append(check)
+        )
+        if required and found < expected:
+            result.add_error(
+                "export",
+                f"{label}: expected {expected}, found {found}",
+                f"Re-run capture to generate missing {label.lower()} files",
+            )
 
-            if required and found < expected:
-                result.add_error(
-                    "export",
-                    f"{label}: expected {expected}, found {found}",
-                    f"Re-run capture to generate missing {label.lower()} files",
-                )
-
-        def add_single_file_check(label, file_path, required):
+    def _add_single_file_artifact_check(self, result, checks, label, file_path, required):
+        found = 0
+        try:
+            if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                found = 1
+        except OSError:
             found = 0
-            try:
-                if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-                    found = 1
-            except OSError:
-                found = 0
 
-            check = {
+        checks.append(
+            {
                 "name": label,
                 "folder": os.path.dirname(file_path),
                 "pattern": os.path.basename(file_path),
@@ -349,37 +354,70 @@ class GSCAPTURE_OT_capture_selected(Operator):
                 "found": found,
                 "required": required,
             }
-            checks.append(check)
+        )
+        if required and found < 1:
+            result.add_error(
+                "export",
+                f"{label}: expected 1, found {found}",
+                f"Re-run capture to generate missing {label.lower()}",
+            )
 
-            if required and found < 1:
-                result.add_error(
-                    "export",
-                    f"{label}: expected 1, found {found}",
-                    f"Re-run capture to generate missing {label.lower()}",
-                )
-
-        add_check("images", self._images_path, f"image_*.{image_ext}", required=True)
+    def _build_post_export_validation(self, settings, image_ext):
+        """Validate exported artifacts and return issues plus check details."""
+        expected = len(self._cameras)
+        result = ValidationResult()
+        checks = []
+        self._add_artifact_check(
+            result,
+            checks,
+            "images",
+            self._images_path,
+            f"image_*.{image_ext}",
+            expected=expected,
+            required=True,
+        )
 
         if settings.export_depth:
-            add_check(
+            self._add_artifact_check(
+                result,
+                checks,
                 "depth",
                 self._depth_path,
                 f"depth_*.{self._depth_output_extension()}",
+                expected=expected,
                 required=True,
             )
 
         if settings.export_normals:
-            add_check("normals", self._normals_path, "normal_*.exr", required=True)
+            self._add_artifact_check(
+                result,
+                checks,
+                "normals",
+                self._normals_path,
+                "normal_*.exr",
+                expected=expected,
+                required=True,
+            )
 
         if settings.export_masks:
             if settings.mask_source == 'ALPHA':
                 pattern = f"image_*.{image_ext}.png" if settings.mask_format == 'GSL' else "mask_*.png"
             else:
                 pattern = f"mask_*.{self._object_index_mask_extension()}"
-            add_check("masks", self._masks_path, pattern, required=True)
+            self._add_artifact_check(
+                result,
+                checks,
+                "masks",
+                self._masks_path,
+                pattern,
+                expected=expected,
+                required=True,
+            )
 
         if settings.export_object_transforms:
-            add_single_file_check(
+            self._add_single_file_artifact_check(
+                result,
+                checks,
                 "object_transforms",
                 os.path.join(self._output_path, "object_transforms.json"),
                 required=True,
@@ -584,6 +622,11 @@ class GSCAPTURE_OT_capture_selected(Operator):
         # Blender 5.x compositor file outputs currently emit EXR for value outputs.
         return "exr" if bpy.app.version >= (5, 0, 0) else "png"
 
+    def _file_output_format_for_extension(self, extension, png_color_mode='BW', png_color_depth=None):
+        if extension == 'exr':
+            return 'OPEN_EXR', None, None
+        return 'PNG', png_color_mode, png_color_depth
+
     def _setup_compositor_outputs(self, context, settings):
         """Setup compositor nodes for depth, normal, and mask outputs."""
         scene = context.scene
@@ -632,9 +675,11 @@ class GSCAPTURE_OT_capture_selected(Operator):
         file_output.name = "GS_Depth_Output"
         file_output.location = (500, -100)
         depth_ext = self._depth_output_extension()
-        depth_format = 'OPEN_EXR' if depth_ext == 'exr' else 'PNG'
-        depth_color_mode = None if depth_ext == 'exr' else 'BW'
-        depth_color_depth = None if depth_ext == 'exr' else '16'
+        depth_format, depth_color_mode, depth_color_depth = self._file_output_format_for_extension(
+            depth_ext,
+            png_color_mode='BW',
+            png_color_depth='16',
+        )
         output_socket = configure_output_file_node(
             file_output,
             os.path.join(self._output_path, "depth"),
@@ -749,8 +794,10 @@ class GSCAPTURE_OT_capture_selected(Operator):
         file_output.name = "GS_Mask_Output"
         file_output.location = (700, -400)
         mask_ext = self._object_index_mask_extension()
-        mask_format = 'OPEN_EXR' if mask_ext == 'exr' else 'PNG'
-        mask_color_mode = None if mask_ext == 'exr' else 'BW'
+        mask_format, mask_color_mode, _ = self._file_output_format_for_extension(
+            mask_ext,
+            png_color_mode='BW',
+        )
         output_socket = configure_output_file_node(
             file_output,
             os.path.join(self._output_path, "masks"),
@@ -782,9 +829,15 @@ class GSCAPTURE_OT_capture_selected(Operator):
 
     def _verify_output_file(self, directory, prefix, ext):
         """Check for a non-empty output file written by compositor or export."""
+        exact_path = os.path.join(directory, f"{prefix}.{ext}")
+        try:
+            if os.path.getsize(exact_path) > 0:
+                return True
+        except OSError:
+            pass
+
         pattern = os.path.join(directory, f"{prefix}*.{ext}")
-        matches = glob.glob(pattern)
-        for path in matches:
+        for path in glob.iglob(pattern):
             try:
                 if os.path.getsize(path) > 0:
                     return True
@@ -933,6 +986,12 @@ class GSCAPTURE_OT_capture_selected(Operator):
         for error in self._checkpoint_writer.pop_errors():
             self.report({'WARNING'}, error)
 
+    def _get_scene_eevee_settings(self, scene):
+        try:
+            return getattr(scene, "eevee", None)
+        except Exception:
+            return None
+
     def execute(self, context):
         cached_validation = getattr(self, "_pre_capture_validation_result", None)
 
@@ -987,12 +1046,16 @@ class GSCAPTURE_OT_capture_selected(Operator):
 
         settings = context.scene.gs_capture_settings
         rd = context.scene.render
+        eevee_settings = self._get_scene_eevee_settings(context.scene)
 
         settings.cancel_requested = False
 
         # Apply render speed preset
         self._original_engine = rd.engine
-        self._original_eevee_samples = context.scene.eevee.taa_render_samples if hasattr(context.scene.eevee, 'taa_render_samples') else 64
+        self._original_eevee_samples = (
+            getattr(eevee_settings, 'taa_render_samples', None)
+            if eevee_settings is not None else None
+        )
         self._original_cycles_samples = context.scene.cycles.samples if hasattr(context.scene, 'cycles') else 128
         if hasattr(rd, "use_lock_interface"):
             self._original_use_lock_interface = rd.use_lock_interface
@@ -1003,15 +1066,15 @@ class GSCAPTURE_OT_capture_selected(Operator):
             if warning:
                 self.report({'WARNING'}, warning)
             rd.engine = engine_name
-            if hasattr(context.scene.eevee, 'taa_render_samples'):
-                context.scene.eevee.taa_render_samples = 16
+            if eevee_settings is not None and hasattr(eevee_settings, 'taa_render_samples'):
+                eevee_settings.taa_render_samples = 16
         elif settings.render_speed_preset == 'BALANCED':
             engine_name, warning = get_eevee_engine_name()
             if warning:
                 self.report({'WARNING'}, warning)
             rd.engine = engine_name
-            if hasattr(context.scene.eevee, 'taa_render_samples'):
-                context.scene.eevee.taa_render_samples = 64
+            if eevee_settings is not None and hasattr(eevee_settings, 'taa_render_samples'):
+                eevee_settings.taa_render_samples = 64
         elif settings.render_speed_preset == 'QUALITY':
             rd.engine = 'CYCLES'
             context.scene.cycles.samples = 128
@@ -1019,8 +1082,9 @@ class GSCAPTURE_OT_capture_selected(Operator):
         def restore_render_settings():
             if self._original_engine:
                 rd.engine = self._original_engine
-            if self._original_eevee_samples and hasattr(context.scene.eevee, 'taa_render_samples'):
-                context.scene.eevee.taa_render_samples = self._original_eevee_samples
+            eevee = self._get_scene_eevee_settings(context.scene)
+            if self._original_eevee_samples is not None and eevee is not None and hasattr(eevee, 'taa_render_samples'):
+                eevee.taa_render_samples = self._original_eevee_samples
             if self._original_cycles_samples and hasattr(context.scene, 'cycles'):
                 context.scene.cycles.samples = self._original_cycles_samples
             if self._original_use_lock_interface is not None and hasattr(rd, "use_lock_interface"):
@@ -1301,7 +1365,7 @@ class GSCAPTURE_OT_capture_selected(Operator):
 
         # Add timer for modal
         wm = context.window_manager
-        self._timer = wm.event_timer_add(0.1, window=context.window)
+        self._timer = wm.event_timer_add(MODAL_TIMER_INTERVAL_SECONDS, window=context.window)
         wm.modal_handler_add(self)
         self._register_render_handlers()
 
@@ -1542,7 +1606,7 @@ class GSCAPTURE_OT_capture_selected(Operator):
                 # Fallback for environments where render handlers are not
                 # triggered reliably: require several consecutive idle ticks.
                 self._render_idle_ticks += 1
-                if self._render_idle_ticks < 5:
+                if self._render_idle_ticks < RENDER_IDLE_TICKS_REQUIRED:
                     return {'RUNNING_MODAL'}
                 self._render_done = True
 
@@ -1777,8 +1841,9 @@ class GSCAPTURE_OT_capture_selected(Operator):
         # Restore render engine and samples
         if self._original_engine:
             context.scene.render.engine = self._original_engine
-        if self._original_eevee_samples and hasattr(context.scene.eevee, 'taa_render_samples'):
-            context.scene.eevee.taa_render_samples = self._original_eevee_samples
+        eevee_settings = self._get_scene_eevee_settings(context.scene)
+        if self._original_eevee_samples is not None and eevee_settings is not None and hasattr(eevee_settings, 'taa_render_samples'):
+            eevee_settings.taa_render_samples = self._original_eevee_samples
         if self._original_cycles_samples and hasattr(context.scene, 'cycles'):
             context.scene.cycles.samples = self._original_cycles_samples
         if self._original_use_lock_interface is not None and hasattr(context.scene.render, "use_lock_interface"):

@@ -90,16 +90,21 @@ def load_library_config(path: str) -> LibraryConfig:
     except OSError as exc:
         print(f"ERROR: Cannot read config file '{path}': {exc}", file=sys.stderr)
         raise SystemExit(1)
+
+    yaml_module = None
     try:
-        import yaml
-        data = yaml.safe_load(text) or {}
+        import yaml as yaml_module
     except ImportError:
-        pass
-    except Exception as exc:
-        print(f"ERROR: Failed to parse YAML config '{path}': {exc}", file=sys.stderr)
-        raise SystemExit(1)
-    else:
-        return _dict_to_dataclass(LibraryConfig, data)
+        yaml_module = None
+
+    if yaml_module is not None:
+        try:
+            data = yaml_module.safe_load(text) or {}
+            return _dict_to_dataclass(LibraryConfig, data)
+        except Exception as exc:
+            print(f"ERROR: Failed to parse YAML config '{path}': {exc}", file=sys.stderr)
+            raise SystemExit(1)
+
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:

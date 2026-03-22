@@ -34,6 +34,7 @@ from .process import TrainingProcess, get_running_process, start_training, stop_
 from .custom_backend import (
     CustomBackend,
     load_custom_backends,
+    get_custom_backend_load_errors,
     get_custom_backend,
     reload_custom_backends,
     get_custom_backends_dir,

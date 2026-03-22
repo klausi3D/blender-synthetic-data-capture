@@ -139,6 +139,8 @@ def parse_args() -> argparse.Namespace:
                    help="Batch capture mode")
     p.add_argument("--collections", nargs="*", default=None,
                    help="Specific collection name(s) to capture")
+    p.add_argument("--object-name", type=str, default=None,
+                   help="Specific object name to capture")
 
     # Timeout
     p.add_argument("--timeout", type=int, default=TIMEOUT_SECONDS,
@@ -196,7 +198,7 @@ def resolve_preset(name: str) -> str:
 # YAML config loading (optional dependency)
 # ---------------------------------------------------------------------------
 def load_yaml_config(config_path: str) -> dict:
-    """Load a YAML job config, return the capture section as a flat dict."""
+    """Load a YAML (or JSON fallback) job config and return the full dict."""
     if not Path(config_path).exists():
         log(f"ERROR: Config file not found: {config_path}")
         return {}
@@ -223,6 +225,7 @@ def load_yaml_config(config_path: str) -> dict:
 
 def merge_config_into_args(args: argparse.Namespace, config: dict) -> None:
     """Overlay YAML config values onto argparse namespace (CLI args win)."""
+    setattr(args, "_config_error", None)
     capture = config.get("capture", {})
     exports = capture.get("exports", {})
 
@@ -259,16 +262,37 @@ def merge_config_into_args(args: argparse.Namespace, config: dict) -> None:
         if value is not None and getattr(args, attr, None) is None:
             setattr(args, attr, value)
 
-    # Items list from config (collections/objects to capture)
-    if not args.collections and config.get("items"):
-        collection_names = [
-            item["name"] for item in config["items"]
-            if item.get("type") == "collection"
-        ]
-        if collection_names:
-            args.collections = collection_names
+    # Target items from config: strict single-target contract.
+    items = config.get("items") or []
+    setattr(args, "_target_items", list(items))
+    if items:
+        if len(items) != 1:
+            error = f"Expected exactly one target item, got {len(items)}"
+            setattr(args, "_config_error", error)
+            log(f"ERROR: {error}")
+            return
+        item = items[0]
+        item_type = str(item.get("type", "")).strip().lower()
+        item_name = str(item.get("name", "")).strip()
+        item_cameras = item.get("cameras")
+
+        if item_type == "collection":
+            if not args.collections:
+                args.collections = [item_name] if item_name else []
             if args.batch_mode is None:
-                args.batch_mode = "COLLECTIONS"
+                args.batch_mode = "COLLECTION"
+        elif item_type == "object":
+            if getattr(args, "object_name", None) is None and item_name:
+                args.object_name = item_name
+            if args.batch_mode is None:
+                args.batch_mode = "SELECTED"
+        else:
+            error = f"Unsupported item type in config: {item_type!r}"
+            setattr(args, "_config_error", error)
+            log(f"ERROR: {error}")
+
+        if isinstance(item_cameras, int) and item_cameras > 0 and args.cameras is None:
+            args.cameras = item_cameras
 
 
 # ---------------------------------------------------------------------------
@@ -400,6 +424,23 @@ def select_targets(args: argparse.Namespace) -> bool:
     scene = bpy.context.scene
     settings = scene.gs_capture_settings
 
+    # Explicit object target
+    if getattr(args, "object_name", None):
+        target_name = str(args.object_name).strip()
+        obj = scene.objects.get(target_name)
+        if obj is None:
+            log(f"ERROR: Object {target_name!r} not found")
+            return False
+        if obj.type != "MESH":
+            log(f"ERROR: Object {target_name!r} is not a mesh")
+            return False
+        bpy.ops.object.select_all(action="DESELECT")
+        obj.select_set(True)
+        bpy.context.view_layer.objects.active = obj
+        settings.batch_mode = "SELECTED"
+        log(f"Selected object: {target_name}")
+        return True
+
     # If specific collections are requested, select the first one for
     # single-collection mode, or set up batch for multiple.
     if args.collections and len(args.collections) == 1:
@@ -425,6 +466,10 @@ def select_targets(args: argparse.Namespace) -> bool:
         log(f"Selected collection: {coll_name}")
         return True
 
+    if args.collections and len(args.collections) > 1:
+        log("ERROR: Multiple explicit collections are not supported in strict mode")
+        return False
+
     # Batch mode for multiple collections or all-collections
     if args.batch_mode == "COLLECTIONS":
         # batch operator handles this; just make sure there's a scene camera
@@ -434,6 +479,24 @@ def select_targets(args: argparse.Namespace) -> bool:
             scene.camera = bpy.context.active_object
             log("Added default camera (none found)")
         return True
+
+    if args.batch_mode == "SELECTED":
+        selected_meshes = [obj for obj in bpy.context.selected_objects if obj.type == "MESH"]
+        if not selected_meshes:
+            log("ERROR: Batch mode SELECTED requires at least one selected mesh object")
+            return False
+        return True
+
+    if args.batch_mode == "EACH_SELECTED":
+        selected_meshes = [obj for obj in bpy.context.selected_objects if obj.type == "MESH"]
+        if not selected_meshes:
+            log("ERROR: Batch mode EACH_SELECTED requires at least one selected mesh object")
+            return False
+        return True
+
+    if args.batch_mode == "COLLECTION":
+        log("ERROR: Batch mode COLLECTION requires exactly one --collections target")
+        return False
 
     if args.batch_mode in ("COLLECTION", "SELECTED", "EACH_SELECTED",
                            "SCENE", "GROUPS"):
@@ -703,6 +766,11 @@ def main() -> None:
             return
         config = load_yaml_config(str(config_path))
         merge_config_into_args(args, config)
+        config_error = getattr(args, "_config_error", None)
+        if config_error:
+            log(f"ERROR: {config_error}")
+            bpy.ops.wm.quit_blender()
+            return
         log(f"Loaded config: {config_path}")
 
     # Validate required args

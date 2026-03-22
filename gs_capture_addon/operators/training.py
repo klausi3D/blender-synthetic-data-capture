@@ -862,13 +862,23 @@ class GSCAPTURE_OT_ReloadCustomBackends(Operator):
 
     def execute(self, context):
         """Reload custom backends."""
-        from ..core.training import reload_custom_backends
+        from ..core.training import reload_custom_backends, get_custom_backend_load_errors
 
         backends = reload_custom_backends()
+        load_errors = get_custom_backend_load_errors(clear=True)
+
+        for message in load_errors:
+            self.report({'WARNING'}, message)
 
         if backends:
-            self.report({'INFO'}, f"Reloaded {len(backends)} custom backend(s)")
+            if load_errors:
+                self.report({'INFO'}, f"Reloaded {len(backends)} custom backend(s) with {len(load_errors)} warning(s)")
+            else:
+                self.report({'INFO'}, f"Reloaded {len(backends)} custom backend(s)")
         else:
+            if load_errors:
+                self.report({'ERROR'}, "Failed to load custom backend configurations")
+                return {'CANCELLED'}
             self.report({'INFO'}, "No custom backends found")
 
         # Force UI update

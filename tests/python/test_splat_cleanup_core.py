@@ -58,6 +58,47 @@ def read_vertex_count(path: Path) -> int:
     raise RuntimeError("No vertex element in PLY header")
 
 
+def read_ascii_xyz_points(path: Path) -> list[tuple[float, float, float]]:
+    with path.open("r", encoding="ascii") as handle:
+        in_body = False
+        points = []
+        for raw_line in handle:
+            line = raw_line.strip()
+            if not in_body:
+                if line == "end_header":
+                    in_body = True
+                continue
+            if not line:
+                continue
+            parts = line.split()
+            points.append((float(parts[0]), float(parts[1]), float(parts[2])))
+        return points
+
+
+def read_binary_xyz_points(path: Path) -> list[tuple[float, float, float]]:
+    with path.open("rb") as handle:
+        vertex_count = None
+        while True:
+            line = handle.readline()
+            if not line:
+                raise RuntimeError("Unexpected EOF in binary PLY header")
+            decoded = line.decode("ascii").strip()
+            if decoded.startswith("element vertex "):
+                vertex_count = int(decoded.split()[-1])
+            if decoded == "end_header":
+                break
+        if vertex_count is None:
+            raise RuntimeError("No vertex count in binary PLY header")
+        points = []
+        for _ in range(vertex_count):
+            row = handle.read(16)  # x, y, z, opacity
+            if len(row) != 16:
+                raise RuntimeError("Unexpected EOF in binary PLY vertex rows")
+            x, y, z, _opacity = struct.unpack("<ffff", row)
+            points.append((x, y, z))
+        return points
+
+
 def test_ascii_cleanup(tmpdir: Path) -> None:
     proxy_hull_path = tmpdir / "capture" / "cleanup" / "proxy_hulls.json"
     write_proxy_hulls(proxy_hull_path)
@@ -103,6 +144,10 @@ def test_ascii_cleanup(tmpdir: Path) -> None:
     assert output_ply.exists()
     assert report_path.exists()
     assert read_vertex_count(output_ply) == 3
+    kept_points = read_ascii_xyz_points(output_ply)
+    assert (1.8, 0.0, 0.0) not in kept_points
+    assert (0.0, 0.0, -1.6) not in kept_points
+    assert (0.0, 0.0, 0.0) in kept_points
 
 
 def test_binary_cleanup(tmpdir: Path) -> None:
@@ -149,6 +194,9 @@ def test_binary_cleanup(tmpdir: Path) -> None:
     assert report["kept_points"] == 2
     assert output_ply.exists()
     assert read_vertex_count(output_ply) == 2
+    kept_points = read_binary_xyz_points(output_ply)
+    rounded = {(round(x, 3), round(y, 3), round(z, 3)) for x, y, z in kept_points}
+    assert rounded == {(0.0, 0.0, 0.0), (0.5, 0.5, 0.5)}
 
 
 def test_removal_ratio_guard(tmpdir: Path) -> None:

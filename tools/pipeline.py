@@ -148,14 +148,14 @@ def run_capture(blender_exe: str, config: dict, config_path: str,
         return True
 
     log(f"Launching capture: {scene_path}")
-    log(f"  Command: {' '.join(cmd)}")
+    log(f"Command: {' '.join(cmd)}")
 
     start = time.monotonic()
     try:
         # Use xvfb-run on Linux CI
         if platform.system() == "Linux" and shutil.which("xvfb-run"):
             cmd = ["xvfb-run", "-a"] + cmd
-            log("  Using xvfb-run for headless display")
+            log("Using xvfb-run for headless display")
 
         result = subprocess.run(
             cmd,

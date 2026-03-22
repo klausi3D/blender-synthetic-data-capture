@@ -240,29 +240,131 @@ def test_filter_collections(F: _Failures) -> None:
 def test_build_job_config(F: _Failures) -> None:
     """Test pipeline job config generation."""
     blend_path = Path("/assets/chair.blend")
-    info = library_capture.BlendFileInfo(
-        path=str(blend_path),
-        collections=[
-            library_capture.CollectionInfo(name="Chair", mesh_count=3, total_vertices=500),
-        ],
-    )
 
     config = {
         "blender_path": "blender",
         "output_base": "/output",
-        "granularity": "COLLECTIONS",
         "capture": {"cameras": 100, "preset": "3dgs"},
         "training": {"enabled": True, "backend": "original"},
         "cleanup": {"enabled": False},
     }
+    output_base = Path("/output/chair_scene")
+    item = {"type": "collection", "name": "Chair", "cameras": 160}
 
-    job = library_capture.build_job_config(blend_path, info, info.collections, config)
+    job = library_capture.build_job_config(blend_path, config, output_base, item=item)
 
     F.check("job_scene", job["scene"] == str(blend_path))
-    F.check("job_output", "chair" in job["output_base"])
-    F.check("job_capture_cameras", job["capture"]["cameras"] == 100)
-    F.check("job_batch_mode", job["capture"]["batch_mode"] == "COLLECTIONS")
+    F.check("job_output", job["output_base"] == str(output_base))
+    F.check("job_capture_cameras", job["capture"]["cameras"] == 160)
+    F.check("job_no_batch_mode", "batch_mode" not in job["capture"])
+    F.check("job_items", job["items"][0]["name"] == "Chair")
     F.check("job_training", job["training"]["enabled"] is True)
+
+
+def test_output_key_uniqueness(F: _Failures) -> None:
+    """Ensure same-stem files in different paths do not collide."""
+    key_a = library_capture._blend_output_key(Path("/assets/a/chair.blend"), library_path="/assets")
+    key_b = library_capture._blend_output_key(Path("/assets/b/chair.blend"), library_path="/assets")
+    F.check("blend_key_unique", key_a != key_b, f"keys collided: {key_a}")
+
+
+def test_generate_jobs_collection_targets(F: _Failures) -> None:
+    """Collection granularity should generate explicit per-collection jobs."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        blend_path = Path("/library/scene.blend")
+        info = library_capture.BlendFileInfo(
+            path=str(blend_path),
+            collections=[
+                library_capture.CollectionInfo(name="Keep", mesh_count=2, object_names=["ObjA"]),
+                library_capture.CollectionInfo(name="Lights", mesh_count=4, object_names=["ObjB"]),
+                library_capture.CollectionInfo(name="Empty", mesh_count=0, object_names=[]),
+            ],
+        )
+
+        config = {
+            "output_base": tmpdir,
+            "library_path": "/library",
+            "granularity": "COLLECTIONS",
+            "skip_existing": False,
+            "filters": {
+                "include_collections": [],
+                "exclude_collections": ["Light*"],
+                "min_mesh_count": 1,
+            },
+            "capture": {"cameras": 100},
+            "training": {},
+            "cleanup": {},
+        }
+
+        jobs = library_capture.generate_jobs([blend_path], {blend_path: info}, config)
+        F.check("collection_jobs_count", len(jobs) == 1, f"expected 1, got {len(jobs)}")
+        if jobs:
+            job = jobs[0]
+            F.check("collection_job_item_type", job["items"][0]["type"] == "collection")
+            F.check("collection_job_item_name", job["items"][0]["name"] == "Keep")
+            F.check("collection_job_output_segment", "/collections/" in job["output_base"])
+
+
+def test_generate_jobs_skip_existing(F: _Failures) -> None:
+    """skip_existing should apply to exact target outputs."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        blend_path = Path("/library/asset.blend")
+        info = library_capture.BlendFileInfo(
+            path=str(blend_path),
+            collections=[
+                library_capture.CollectionInfo(name="Furniture", mesh_count=3, object_names=["Chair"]),
+            ],
+        )
+
+        config = {
+            "output_base": tmpdir,
+            "library_path": "/library",
+            "granularity": "COLLECTIONS",
+            "skip_existing": True,
+            "filters": {"include_collections": [], "exclude_collections": [], "min_mesh_count": 1},
+            "capture": {"cameras": 50},
+            "training": {},
+            "cleanup": {},
+        }
+
+        jobs = library_capture.generate_jobs([blend_path], {blend_path: info}, config)
+        F.check("skip_existing_initial_jobs", len(jobs) == 1, f"expected 1, got {len(jobs)}")
+        if jobs:
+            summary_path = Path(jobs[0]["output_base"]) / "headless_capture_summary.json"
+            make_summary(summary_path, success=True, images=12)
+            jobs_after = library_capture.generate_jobs([blend_path], {blend_path: info}, config)
+            F.check("skip_existing_after_summary", len(jobs_after) == 0, f"expected 0, got {len(jobs_after)}")
+
+
+def test_generate_jobs_each_object_targets(F: _Failures) -> None:
+    """Each-object granularity should emit one job per unique object name."""
+    blend_path = Path("/library/object_scene.blend")
+    info = library_capture.BlendFileInfo(
+        path=str(blend_path),
+        collections=[
+            library_capture.CollectionInfo(name="Main", mesh_count=2, object_names=["A", "B", "A"]),
+        ],
+    )
+    config = {
+        "output_base": "/tmp/out",
+        "library_path": "/library",
+        "granularity": "EACH_OBJECT",
+        "skip_existing": False,
+        "filters": {"include_collections": [], "exclude_collections": [], "min_mesh_count": 1},
+        "capture": {"cameras": 30},
+        "training": {},
+        "cleanup": {},
+    }
+
+    jobs = library_capture.generate_jobs([blend_path], {blend_path: info}, config)
+    names = sorted(job["items"][0]["name"] for job in jobs)
+    F.check("each_object_job_count", len(jobs) == 2, f"expected 2, got {len(jobs)}")
+    F.check("each_object_names", names == ["A", "B"], f"unexpected names: {names}")
+    F.check(
+        "each_object_output_segment",
+        all("/objects/" in job["output_base"] for job in jobs),
+        "expected all outputs under /objects/",
+    )
 
 
 def test_parse_asset_catalog(F: _Failures) -> None:
@@ -347,6 +449,18 @@ def main() -> int:
 
     print("test_build_job_config")
     test_build_job_config(F)
+
+    print("test_output_key_uniqueness")
+    test_output_key_uniqueness(F)
+
+    print("test_generate_jobs_collection_targets")
+    test_generate_jobs_collection_targets(F)
+
+    print("test_generate_jobs_skip_existing")
+    test_generate_jobs_skip_existing(F)
+
+    print("test_generate_jobs_each_object_targets")
+    test_generate_jobs_each_object_targets(F)
 
     print("test_parse_asset_catalog")
     test_parse_asset_catalog(F)
