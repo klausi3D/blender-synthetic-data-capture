@@ -9,6 +9,7 @@ import bpy
 from bpy.types import Panel
 
 _CHECKPOINT_CACHE = {}
+_CHECKPOINT_CACHE_MAX_ENTRIES = 128
 
 
 def _load_checkpoint_cached(output_path, ttl_seconds=1.5):
@@ -19,15 +20,22 @@ def _load_checkpoint_cached(output_path, ttl_seconds=1.5):
     except OSError:
         checkpoint_mtime = 0.0
 
-    cache_key = (output_path, checkpoint_mtime)
+    cache_key = output_path
     now = time.monotonic()
     entry = _CHECKPOINT_CACHE.get(cache_key)
-    if entry and (now - entry["ts"]) < ttl_seconds:
+    if (
+        entry and
+        entry.get("mtime") == checkpoint_mtime and
+        (now - entry["ts"]) < ttl_seconds
+    ):
         return entry["value"]
 
     from ..utils.checkpoint import load_checkpoint
     value = load_checkpoint(output_path)
-    _CHECKPOINT_CACHE[cache_key] = {"ts": now, "value": value}
+    _CHECKPOINT_CACHE[cache_key] = {"ts": now, "mtime": checkpoint_mtime, "value": value}
+    if len(_CHECKPOINT_CACHE) > _CHECKPOINT_CACHE_MAX_ENTRIES:
+        oldest_key = min(_CHECKPOINT_CACHE, key=lambda item: _CHECKPOINT_CACHE[item]["ts"])
+        _CHECKPOINT_CACHE.pop(oldest_key, None)
     return value
 
 

@@ -148,6 +148,12 @@ def relative_blend_path(blend_file_path: str, library_root: str) -> str:
         return os.path.basename(blend_file_path)
 
 
+def make_safe_output_name(value: str, fallback: str = "item") -> str:
+    """Return a filesystem-safe folder name for capture outputs."""
+    cleaned = _clean_path_component(value)
+    return cleaned or fallback
+
+
 def _clean_path_component(value: str) -> str:
     """Normalize folder-name segments to portable ASCII-safe text."""
     cleaned = []

@@ -11,6 +11,7 @@ from bpy.types import Operator
 from ..utils.asset_library import (
     discover_asset_library_blend_files,
     make_output_subfolder_name,
+    make_safe_output_name,
     relative_blend_path,
     resolve_asset_library_path,
 )
@@ -41,6 +42,7 @@ class GSCAPTURE_OT_batch_capture(Operator):
     _asset_mode = False
     _asset_manifest_entries = None
     _manifest_written = False
+    _used_output_subfolders = None
 
     @classmethod
     def poll(cls, context):
@@ -57,6 +59,7 @@ class GSCAPTURE_OT_batch_capture(Operator):
         self._asset_mode = settings.batch_mode == 'ASSET_LIBRARY'
         self._asset_manifest_entries = {}
         self._manifest_written = False
+        self._used_output_subfolders = set()
 
         self._items_to_capture = self._build_items_to_capture(context, settings)
         if not self._items_to_capture:
@@ -288,7 +291,14 @@ class GSCAPTURE_OT_batch_capture(Operator):
             self._failed += 1
             return False
 
-        settings.output_path = os.path.join(self._output_root_abs, name)
+        output_subfolder = self._allocate_output_subfolder(name, fallback_prefix="capture")
+        output_path = self._resolve_output_subfolder_path(output_subfolder)
+        if not output_path:
+            self.report({'ERROR'}, f"Skipping '{name}': invalid output subfolder")
+            self._failed += 1
+            return False
+
+        settings.output_path = output_path
         self._select_objects(context, objects)
         return self._invoke_capture_operator(name=name, on_failure=None)
 
@@ -311,7 +321,14 @@ class GSCAPTURE_OT_batch_capture(Operator):
             return False
 
         self._current_asset_import = import_state
-        settings.output_path = os.path.join(self._output_root_abs, item.get("output_subfolder", name))
+        output_subfolder = item.get("output_subfolder", name)
+        output_path = self._resolve_output_subfolder_path(output_subfolder)
+        if not output_path:
+            self._record_asset_result(item, "failed", "invalid output subfolder")
+            self._cleanup_current_asset_import(context)
+            self._failed += 1
+            return False
+        settings.output_path = output_path
         self._select_objects(context, mesh_objects)
 
         def _on_failure(failure_message):
@@ -319,6 +336,30 @@ class GSCAPTURE_OT_batch_capture(Operator):
             self._cleanup_current_asset_import(context)
 
         return self._invoke_capture_operator(name=name, on_failure=_on_failure)
+
+    def _allocate_output_subfolder(self, raw_name, fallback_prefix="item"):
+        safe_base = make_safe_output_name(raw_name, fallback=fallback_prefix)
+        used = self._used_output_subfolders if isinstance(self._used_output_subfolders, set) else set()
+
+        candidate = safe_base
+        suffix = 2
+        while candidate in used:
+            candidate = f"{safe_base}__{suffix:02d}"
+            suffix += 1
+        used.add(candidate)
+        self._used_output_subfolders = used
+        return candidate
+
+    def _resolve_output_subfolder_path(self, subfolder):
+        normalized_root = os.path.normpath(self._output_root_abs)
+        normalized_subfolder = os.path.normpath(str(subfolder or ""))
+        candidate = os.path.normpath(os.path.join(normalized_root, normalized_subfolder))
+        try:
+            if os.path.commonpath([normalized_root, candidate]) != normalized_root:
+                return None
+        except ValueError:
+            return None
+        return candidate
 
     def _invoke_capture_operator(self, name, on_failure):
         try:
@@ -372,8 +413,7 @@ class GSCAPTURE_OT_batch_capture(Operator):
             context.scene.collection.children.link(temp_collection)
 
             for obj in mesh_objects:
-                if obj.name not in temp_collection.objects:
-                    temp_collection.objects.link(obj)
+                temp_collection.objects.link(obj)
                 if getattr(obj, "data", None) is not None:
                     imported_mesh_data.add(obj.data)
                     for material in obj.data.materials:
@@ -401,8 +441,8 @@ class GSCAPTURE_OT_batch_capture(Operator):
             if obj and obj.name in bpy.data.objects:
                 try:
                     bpy.data.objects.remove(obj, do_unlink=True)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    print(f"Batch cleanup warning: failed to remove object '{obj.name}': {exc}")
 
     def _cleanup_current_asset_import(self, context):
         if self._current_asset_import:
@@ -419,26 +459,26 @@ class GSCAPTURE_OT_batch_capture(Operator):
                 try:
                     if collection in scene.collection.children:
                         scene.collection.children.unlink(collection)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    print(f"Batch cleanup warning: failed to unlink collection '{collection.name}': {exc}")
             try:
                 bpy.data.collections.remove(collection)
-            except Exception:
-                pass
+            except Exception as exc:
+                print(f"Batch cleanup warning: failed to remove collection '{collection.name}': {exc}")
 
         for mesh in import_state.get("mesh_data", []):
             if mesh and mesh.name in bpy.data.meshes and mesh.users == 0:
                 try:
                     bpy.data.meshes.remove(mesh)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    print(f"Batch cleanup warning: failed to remove mesh '{mesh.name}': {exc}")
 
         for material in import_state.get("materials", []):
             if material and material.name in bpy.data.materials and material.users == 0:
                 try:
                     bpy.data.materials.remove(material)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    print(f"Batch cleanup warning: failed to remove material '{material.name}': {exc}")
 
     def _finalize_completed_item(self, context, cancelled=False):
         settings = context.scene.gs_capture_settings
@@ -471,7 +511,7 @@ class GSCAPTURE_OT_batch_capture(Operator):
 
         asset_index = item.get("asset_index")
         output_subfolder = item.get("output_subfolder", item.get("name", ""))
-        output_path = os.path.join(self._output_root_abs, output_subfolder)
+        output_path = self._resolve_output_subfolder_path(output_subfolder) or ""
         entry = {
             "index": asset_index,
             "blend_file": item.get("blend_path", ""),

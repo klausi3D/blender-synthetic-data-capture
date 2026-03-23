@@ -380,6 +380,8 @@ class CustomBackend(TrainingBackend):
 # Cache for loaded custom backends
 _custom_backends_cache: Dict[str, CustomBackend] = {}
 _cache_timestamp: float = 0.0
+_last_load_errors: List[str] = []
+_cache_signature: tuple = ()
 
 
 def load_custom_backends(custom_dir: str = None, force_reload: bool = False) -> Dict[str, CustomBackend]:
@@ -393,7 +395,7 @@ def load_custom_backends(custom_dir: str = None, force_reload: bool = False) -> 
     Returns:
         dict: Mapping of backend_id to CustomBackend instance
     """
-    global _custom_backends_cache, _cache_timestamp
+    global _custom_backends_cache, _cache_timestamp, _last_load_errors, _cache_signature
 
     if custom_dir is None:
         # Default to addon's custom_backends folder
@@ -401,32 +403,54 @@ def load_custom_backends(custom_dir: str = None, force_reload: bool = False) -> 
         custom_dir = os.path.join(addon_dir, "custom_backends")
 
     if not os.path.exists(custom_dir):
+        _last_load_errors = []
+        _cache_signature = ()
         return {}
 
-    # Check if we need to reload based on directory modification time
-    try:
-        dir_mtime = os.path.getmtime(custom_dir)
-        if not force_reload and _custom_backends_cache and dir_mtime <= _cache_timestamp:
-            return _custom_backends_cache
-    except OSError:
-        pass
+    config_filenames = sorted(
+        filename for filename in os.listdir(custom_dir)
+        if filename.endswith(('.yaml', '.yml', '.json'))
+    )
+    signature_parts = []
+    for filename in config_filenames:
+        config_path = os.path.join(custom_dir, filename)
+        try:
+            signature_parts.append((filename, os.path.getmtime(config_path)))
+        except OSError:
+            signature_parts.append((filename, -1.0))
+    current_signature = tuple(signature_parts)
+    if not force_reload and _custom_backends_cache and current_signature == _cache_signature:
+        return _custom_backends_cache
 
     backends = {}
+    load_errors = []
 
-    for filename in os.listdir(custom_dir):
-        if filename.endswith(('.yaml', '.yml', '.json')):
-            config_path = os.path.join(custom_dir, filename)
-            try:
-                backend = CustomBackend(config_path)
-                backends[backend.backend_id] = backend
-            except Exception as e:
-                print(f"Failed to load custom backend {filename}: {e}")
+    for filename in config_filenames:
+        config_path = os.path.join(custom_dir, filename)
+        try:
+            backend = CustomBackend(config_path)
+            backends[backend.backend_id] = backend
+        except Exception as e:
+            message = f"Failed to load custom backend {filename}: {e}"
+            print(message)
+            load_errors.append(message)
 
     # Update cache
     _custom_backends_cache = backends
     _cache_timestamp = os.path.getmtime(custom_dir) if os.path.exists(custom_dir) else 0.0
+    _last_load_errors = load_errors
+    _cache_signature = current_signature
 
     return backends
+
+
+def get_custom_backend_load_errors(clear: bool = False) -> List[str]:
+    """Return custom backend load errors from the latest scan."""
+    global _last_load_errors
+    errors = list(_last_load_errors)
+    if clear:
+        _last_load_errors = []
+    return errors
 
 
 def get_custom_backend(backend_id: str, custom_dir: str = None) -> Optional[CustomBackend]:

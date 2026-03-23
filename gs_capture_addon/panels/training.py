@@ -21,6 +21,7 @@ from ..utils.folder_structure import get_export_settings, validate_structure, co
 # =============================================================================
 
 _UI_CACHE = {}
+_UI_CACHE_MAX_ENTRIES = 256
 
 
 def _cached_value(namespace, key, ttl_seconds, loader):
@@ -33,6 +34,9 @@ def _cached_value(namespace, key, ttl_seconds, loader):
 
     value = loader()
     _UI_CACHE[cache_key] = {"ts": now, "value": value}
+    if len(_UI_CACHE) > _UI_CACHE_MAX_ENTRIES:
+        oldest_key = min(_UI_CACHE, key=lambda item: _UI_CACHE[item]["ts"])
+        _UI_CACHE.pop(oldest_key, None)
     return value
 
 

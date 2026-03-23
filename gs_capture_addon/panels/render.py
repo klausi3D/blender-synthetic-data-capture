@@ -36,7 +36,11 @@ class GSCAPTURE_PT_render_panel(Panel):
         if rd.engine == 'CYCLES':
             layout.prop(scene.cycles, "samples", text="Samples")
         else:
-            layout.prop(scene.eevee, "taa_render_samples", text="Samples")
+            eevee = getattr(scene, "eevee", None)
+            if eevee is not None and hasattr(eevee, "taa_render_samples"):
+                layout.prop(eevee, "taa_render_samples", text="Samples")
+            else:
+                layout.label(text="Samples not available for this engine", icon='INFO')
 
         # File format from image settings
         layout.prop(rd.image_settings, "file_format")

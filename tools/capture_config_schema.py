@@ -64,13 +64,13 @@ class CaptureConfig:
 class CaptureItemConfig:
     """A single item to capture.
 
-    Currently only ``type="collection"`` is supported by the headless
-    capture script.  Per-item ``cameras`` overrides are reserved for
-    future use and currently ignored (the global camera count applies).
+    Supported item types include ``collection`` and ``object`` in headless
+    capture workflows. Per-item ``cameras`` overrides are applied when
+    no explicit CLI camera count is provided.
     """
     type: str = "collection"
     name: str = ""
-    cameras: Optional[int] = None  # reserved — not yet wired to runtime
+    cameras: Optional[int] = None
 
 
 @dataclass
@@ -164,16 +164,21 @@ def load_job_config(path: str) -> JobConfig:
     except OSError as exc:
         print(f"ERROR: Cannot read config file '{path}': {exc}", file=sys.stderr)
         raise SystemExit(1)
+
+    yaml_module = None
     try:
-        import yaml
-        data = yaml.safe_load(text) or {}
+        import yaml as yaml_module
     except ImportError:
-        pass
-    except Exception as exc:
-        print(f"ERROR: Failed to parse YAML config '{path}': {exc}", file=sys.stderr)
-        raise SystemExit(1)
-    else:
-        return _dict_to_dataclass(JobConfig, data)
+        yaml_module = None
+
+    if yaml_module is not None:
+        try:
+            data = yaml_module.safe_load(text) or {}
+            return _dict_to_dataclass(JobConfig, data)
+        except Exception as exc:
+            print(f"ERROR: Failed to parse YAML config '{path}': {exc}", file=sys.stderr)
+            raise SystemExit(1)
+
     try:
         data = json.loads(text)
     except json.JSONDecodeError as exc:

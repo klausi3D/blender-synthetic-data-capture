@@ -14,6 +14,7 @@ Usage:
 """
 
 import argparse
+import hashlib
 import json
 import os
 import platform
@@ -103,14 +104,20 @@ def load_config(path: str) -> dict:
     except OSError as exc:
         print(f"ERROR: Cannot read config file '{path}': {exc}", file=sys.stderr)
         raise SystemExit(1)
+
+    yaml_module = None
     try:
-        import yaml
-        return yaml.safe_load(text) or {}
+        import yaml as yaml_module
     except ImportError:
-        pass
-    except Exception as exc:
-        print(f"ERROR: Failed to parse YAML config '{path}': {exc}", file=sys.stderr)
-        raise SystemExit(1)
+        yaml_module = None
+
+    if yaml_module is not None:
+        try:
+            return yaml_module.safe_load(text) or {}
+        except Exception as exc:
+            print(f"ERROR: Failed to parse YAML config '{path}': {exc}", file=sys.stderr)
+            raise SystemExit(1)
+
     try:
         return json.loads(text)
     except json.JSONDecodeError as exc:
@@ -309,31 +316,65 @@ def introspect_all(blender_exe: str, blend_files: List[Path],
 # ---------------------------------------------------------------------------
 # Phase 3: Job generation
 # ---------------------------------------------------------------------------
-def is_collection_captured(output_base: Path, blend_stem: str,
-                           collection_name: str) -> bool:
-    """Check if a collection has already been successfully captured."""
-    collection_dir = output_base / blend_stem / collection_name
-    summary_path = collection_dir / "headless_capture_summary.json"
+def _sanitize_path_component(value: str, fallback: str = "item") -> str:
+    cleaned = []
+    for char in str(value):
+        if ord(char) < 128 and (char.isalnum() or char in {"-", "_", "."}):
+            cleaned.append(char)
+        else:
+            cleaned.append("_")
+    normalized = "".join(cleaned).strip(" ._")
+    return normalized or fallback
+
+
+def _stable_digest(value: str, length: int = 10) -> str:
+    return hashlib.sha1(value.encode("utf-8")).hexdigest()[:length]
+
+
+def _blend_output_key(blend_path: Path, library_path: str = "") -> str:
+    resolved = blend_path.resolve()
+    source = resolved.as_posix()
+
+    relative_no_suffix = None
+    if library_path:
+        try:
+            relative_no_suffix = resolved.relative_to(Path(library_path).resolve()).with_suffix("")
+        except Exception:
+            relative_no_suffix = None
+
+    if relative_no_suffix is None:
+        label = _sanitize_path_component(blend_path.stem, fallback="blend")
+    else:
+        parts = [_sanitize_path_component(part, fallback="part") for part in relative_no_suffix.parts]
+        label = "__".join(parts) if parts else _sanitize_path_component(blend_path.stem, fallback="blend")
+
+    return f"{label}__{_stable_digest(source)}"
+
+
+def _target_output_key(name: str) -> str:
+    normalized = _sanitize_path_component(name, fallback="target")
+    return f"{normalized}__{_stable_digest(str(name), length=8)}"
+
+
+def _is_capture_completed(output_dir: Path) -> bool:
+    summary_path = output_dir / "headless_capture_summary.json"
     if not summary_path.exists():
         return False
     try:
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
-        return summary.get("success", False) and summary.get("total_images", 0) > 0
     except (json.JSONDecodeError, OSError):
         return False
+    return bool(summary.get("success")) and int(summary.get("total_images", 0)) > 0
+
+
+def is_collection_captured(output_base: Path, blend_stem: str, collection_name: str) -> bool:
+    """Backward-compatible helper used by tests."""
+    return _is_capture_completed(output_base / blend_stem / collection_name)
 
 
 def is_scene_captured(output_base: Path, blend_stem: str) -> bool:
-    """Check if a full-scene capture already exists."""
-    scene_dir = output_base / blend_stem
-    summary_path = scene_dir / "headless_capture_summary.json"
-    if not summary_path.exists():
-        return False
-    try:
-        summary = json.loads(summary_path.read_text(encoding="utf-8"))
-        return summary.get("success", False) and summary.get("total_images", 0) > 0
-    except (json.JSONDecodeError, OSError):
-        return False
+    """Backward-compatible helper used by tests."""
+    return _is_capture_completed(output_base / blend_stem)
 
 
 def filter_collections(collections: List[CollectionInfo],
@@ -356,48 +397,44 @@ def filter_collections(collections: List[CollectionInfo],
     return result
 
 
-def build_job_config(blend_path: Path, info: BlendFileInfo,
-                     filtered_collections: List[CollectionInfo],
-                     config: dict) -> dict:
-    """Build a pipeline.py-compatible job config dict for one .blend file."""
-    blend_stem = blend_path.stem
-    output_base = str(Path(config.get("output_base", "")) / blend_stem)
-    granularity = config.get("granularity", "COLLECTIONS")
-
-    # Start with capture defaults from library config
+def build_job_config(
+    blend_path: Path,
+    config: dict,
+    output_base: Path,
+    item: Optional[dict] = None,
+    cameras_override: Optional[int] = None,
+) -> dict:
+    """Build a pipeline.py-compatible job config dict for one explicit target."""
     capture = dict(config.get("capture", {}))
+    capture.pop("batch_mode", None)
 
-    # Map granularity to batch_mode
-    if granularity == "COLLECTIONS":
-        capture["batch_mode"] = "COLLECTIONS"
-    elif granularity == "EACH_OBJECT":
-        capture["batch_mode"] = "EACH_SELECTED"
-    else:
-        capture.pop("batch_mode", None)  # SCENE mode = no batch
+    if cameras_override is None and item is not None:
+        item_cameras = item.get("cameras")
+        if isinstance(item_cameras, int) and item_cameras > 0:
+            cameras_override = item_cameras
+    if cameras_override is not None:
+        capture["cameras"] = int(cameras_override)
 
-    # If adaptive is enabled and first collection has recommendations,
-    # use those as defaults (collections mode handles all of them)
-    if config.get("adaptive", False) and filtered_collections:
-        # Use the median recommendation across collections
-        adaptive_cameras = []
-        for coll in filtered_collections:
-            if coll.adaptive and "recommended_cameras" in coll.adaptive:
-                adaptive_cameras.append(coll.adaptive["recommended_cameras"])
-        if adaptive_cameras:
-            adaptive_cameras.sort()
-            median_idx = len(adaptive_cameras) // 2
-            capture["cameras"] = adaptive_cameras[median_idx]
+    job_label = blend_path.name
+    items = None
+    if item:
+        items = [item]
+        job_label = f"{blend_path.name}:{item.get('type', 'item')}:{item.get('name', '')}"
 
+    job_id = _stable_digest(f"{blend_path.resolve()}|{output_base}|{item or ''}", length=16)
     job = {
+        "job_id": job_id,
+        "job_label": job_label,
         "blender_path": config.get("blender_path", "blender"),
         "scene": str(blend_path),
-        "output_base": output_base,
+        "output_base": str(output_base),
         "capture": capture,
         "training": config.get("training", {}),
         "cleanup": config.get("cleanup", {}),
         "timeout_per_capture": config.get("timeout_per_file", 7200),
     }
-
+    if items:
+        job["items"] = items
     return job
 
 
@@ -408,10 +445,11 @@ def generate_jobs(blend_files: List[Path],
     output_base = Path(config.get("output_base", ""))
     skip_existing = config.get("skip_existing", True)
     granularity = config.get("granularity", "COLLECTIONS")
+    library_path = config.get("library_path", "")
 
     jobs = []
     total_skipped = 0
-    total_collections = 0
+    total_targets = 0
 
     for blend_path in blend_files:
         info = introspection.get(blend_path)
@@ -419,38 +457,72 @@ def generate_jobs(blend_files: List[Path],
             log(f"Skipping {blend_path.name} (introspection failed)", "WARN")
             continue
 
-        blend_stem = blend_path.stem
+        blend_key = _blend_output_key(blend_path, library_path=library_path)
+        blend_root = output_base / blend_key
 
         # Filter collections
         filtered = filter_collections(info.collections, config)
-        if not filtered and granularity == "COLLECTIONS":
+        if not filtered and granularity in {"COLLECTIONS", "EACH_OBJECT"}:
             log(f"Skipping {blend_path.name} (no collections pass filters)")
             continue
 
-        # Skip-if-already-captured logic
-        if skip_existing and granularity == "SCENE":
-            if is_scene_captured(output_base, blend_stem):
-                log(f"Skipping {blend_path.name} (already captured)")
+        if granularity == "SCENE":
+            scene_output = blend_root / "scene"
+            if skip_existing and _is_capture_completed(scene_output):
+                log(f"Skipping {blend_path.name} (scene target already captured)")
                 total_skipped += 1
                 continue
+            jobs.append(build_job_config(blend_path, config, scene_output))
+            total_targets += 1
+            continue
 
-        if skip_existing and granularity == "COLLECTIONS":
-            not_captured = []
+        if granularity == "COLLECTIONS":
             for coll in filtered:
-                if is_collection_captured(output_base, blend_stem, coll.name):
+                coll_output = blend_root / "collections" / _target_output_key(coll.name)
+                if skip_existing and _is_capture_completed(coll_output):
                     total_skipped += 1
-                else:
-                    not_captured.append(coll)
-            if not not_captured:
-                log(f"Skipping {blend_path.name} (all collections already captured)")
+                    continue
+                item = {"type": "collection", "name": coll.name}
+                cameras_override = None
+                if config.get("adaptive", False):
+                    recommended = (coll.adaptive or {}).get("recommended_cameras")
+                    if isinstance(recommended, int) and recommended > 0:
+                        item["cameras"] = recommended
+                        cameras_override = recommended
+                jobs.append(
+                    build_job_config(
+                        blend_path,
+                        config,
+                        coll_output,
+                        item=item,
+                        cameras_override=cameras_override,
+                    )
+                )
+                total_targets += 1
+            continue
+
+        if granularity == "EACH_OBJECT":
+            object_names = []
+            for coll in filtered:
+                object_names.extend(coll.object_names)
+            unique_object_names = sorted(set(name for name in object_names if name))
+            if not unique_object_names:
+                log(f"Skipping {blend_path.name} (no object targets discovered)", "WARN")
                 continue
-            filtered = not_captured
 
-        total_collections += len(filtered)
-        job = build_job_config(blend_path, info, filtered, config)
-        jobs.append(job)
+            for object_name in unique_object_names:
+                object_output = blend_root / "objects" / _target_output_key(object_name)
+                if skip_existing and _is_capture_completed(object_output):
+                    total_skipped += 1
+                    continue
+                item = {"type": "object", "name": object_name}
+                jobs.append(build_job_config(blend_path, config, object_output, item=item))
+                total_targets += 1
+            continue
 
-    log(f"Generated {len(jobs)} jobs covering {total_collections} collections "
+        log(f"Skipping {blend_path.name} (unsupported granularity: {granularity})", "WARN")
+
+    log(f"Generated {len(jobs)} jobs covering {total_targets} targets "
         f"({total_skipped} skipped)")
     return jobs
 
@@ -461,8 +533,11 @@ def generate_jobs(blend_files: List[Path],
 def write_temp_config(job_config: dict, output_dir: Path) -> Path:
     """Write a temporary YAML config file for pipeline.py."""
     output_dir.mkdir(parents=True, exist_ok=True)
-    blend_stem = Path(job_config.get("scene", "unknown")).stem
-    config_path = output_dir / f"_generated_{blend_stem}.yaml"
+    job_id = str(job_config.get("job_id", "")).strip()
+    if not job_id:
+        fallback = f"{job_config.get('scene', '')}|{job_config.get('output_base', '')}"
+        job_id = _stable_digest(fallback, length=16)
+    config_path = output_dir / f"_generated_{job_id}.yaml"
 
     try:
         import yaml
@@ -478,13 +553,13 @@ def execute_job(job_config: dict, config: dict,
                 gpu_id: int = 0, dry_run: bool = False) -> JobResult:
     """Execute a single pipeline job. Returns JobResult."""
     blend_path = job_config.get("scene", "")
-    blend_stem = Path(blend_path).stem
+    job_label = job_config.get("job_label", Path(blend_path).stem or "job")
     start = time.monotonic()
 
     result = JobResult(blend_path=blend_path)
 
     if dry_run:
-        log(f"[DRY RUN] Would process: {blend_stem}")
+        log(f"[DRY RUN] Would process: {job_label}")
         log(f"  Scene: {blend_path}")
         log(f"  Output: {job_config.get('output_base')}")
         capture = job_config.get("capture", {})
@@ -504,10 +579,12 @@ def execute_job(job_config: dict, config: dict,
     try:
         ok = run_pipeline(str(config_path), dry_run=False)
         result.success = ok
+        if not ok:
+            result.error = "pipeline execution returned failure"
     except Exception as e:
         result.success = False
         result.error = str(e)
-        log(f"Pipeline error for {blend_stem}: {e}", "ERROR")
+        log(f"Pipeline error for {job_label}: {e}", "ERROR")
 
     result.elapsed_seconds = round(time.monotonic() - start, 2)
     return result
@@ -516,14 +593,14 @@ def execute_job(job_config: dict, config: dict,
 def execute_all(jobs: List[dict], config: dict, dry_run: bool = False) -> List[JobResult]:
     """Execute all jobs, optionally in parallel."""
     max_workers = config.get("max_workers", 1)
-    gpu_ids = config.get("gpu_ids", [0])
+    gpu_ids = list(config.get("gpu_ids", [0]) or [0])
     results = []
 
     if max_workers <= 1:
         # Sequential execution
         for i, job in enumerate(jobs, 1):
-            blend_stem = Path(job.get("scene", "")).stem
-            log(f"Processing [{i}/{len(jobs)}]: {blend_stem}")
+            job_label = job.get("job_label", Path(job.get("scene", "")).stem or "job")
+            log(f"Processing [{i}/{len(jobs)}]: {job_label}")
             gpu_id = gpu_ids[0] if gpu_ids else 0
             result = execute_job(job, config, gpu_id, dry_run)
             results.append(result)
@@ -543,19 +620,19 @@ def execute_all(jobs: List[dict], config: dict, dry_run: bool = False) -> List[J
 
             for future in as_completed(futures):
                 job = futures[future]
-                blend_stem = Path(job.get("scene", "")).stem
+                job_label = job.get("job_label", Path(job.get("scene", "")).stem or "job")
                 try:
                     result = future.result()
                     results.append(result)
                     status = "OK" if result.success else "FAILED"
-                    log(f"  {blend_stem}: {status} ({result.elapsed_seconds:.0f}s)")
+                    log(f"  {job_label}: {status} ({result.elapsed_seconds:.0f}s)")
                 except Exception as e:
                     results.append(JobResult(
                         blend_path=job.get("scene", ""),
                         success=False,
                         error=str(e),
                     ))
-                    log(f"  {blend_stem}: EXCEPTION: {e}", "ERROR")
+                    log(f"  {job_label}: EXCEPTION: {e}", "ERROR")
 
     return results
 
