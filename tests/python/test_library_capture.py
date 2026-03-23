@@ -302,7 +302,10 @@ def test_generate_jobs_collection_targets(F: _Failures) -> None:
             job = jobs[0]
             F.check("collection_job_item_type", job["items"][0]["type"] == "collection")
             F.check("collection_job_item_name", job["items"][0]["name"] == "Keep")
-            F.check("collection_job_output_segment", "/collections/" in job["output_base"])
+            F.check(
+                "collection_job_output_segment",
+                "collections" in Path(job["output_base"]).parts,
+            )
 
 
 def test_generate_jobs_skip_existing(F: _Failures) -> None:
@@ -362,7 +365,7 @@ def test_generate_jobs_each_object_targets(F: _Failures) -> None:
     F.check("each_object_names", names == ["A", "B"], f"unexpected names: {names}")
     F.check(
         "each_object_output_segment",
-        all("/objects/" in job["output_base"] for job in jobs),
+        all("objects" in Path(job["output_base"]).parts for job in jobs),
         "expected all outputs under /objects/",
     )
 
